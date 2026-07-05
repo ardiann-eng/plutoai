@@ -78,6 +78,34 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    requireEnv();
+    if (!process.env.GOOGLE_CLIENT_ID) return res.status(500).json({ error: 'Google Login belum dikonfigurasi.' });
+    const { credential } = req.body;
+    if (!credential) return res.status(400).json({ error: 'Credential Google kosong.' });
+    const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+    const profile = await response.json();
+    if (!response.ok || profile.aud !== process.env.GOOGLE_CLIENT_ID || !profile.email) return res.status(401).json({ error: 'Login Google tidak valid.' });
+    const email = profile.email.trim().toLowerCase();
+    const existing = await db.execute({ sql: 'SELECT * FROM users WHERE email = ?', args: [email] });
+    let user = existing.rows[0];
+    if (!user) {
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      const passwordHash = await bcrypt.hash(crypto.randomUUID(), 12);
+      await db.execute({
+        sql: 'INSERT INTO users (id, name, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [id, profile.name || email.split('@')[0], email, passwordHash, now, now],
+      });
+      user = { id, name: profile.name || email.split('@')[0], email, created_at: now };
+    }
+    res.json({ user: sanitizeUser(user), token: signToken(user) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/auth/me', auth, (req, res) => {
   res.json({ user: sanitizeUser(req.user) });
 });
@@ -436,6 +464,12 @@ app.post('/api/ai/chat', auth, async (req, res) => {
     await assertTokenBudget(req.user.id, estimateTokens(`${message}\n${canvas?.content || ''}\n${JSON.stringify(canvas?.files || [])}`));
     const now = Date.now();
     const userMessageId = crypto.randomUUID();
+    await db.execute({
+      sql: `INSERT INTO sessions (id, user_id, title, mode, model, notes, chat_summary, code_output, terminal_output, image_settings, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET mode=excluded.mode, model=excluded.model, updated_at=excluded.updated_at`,
+      args: [sessionId, req.user.id, message.slice(0, 34) || 'Sesi Pluto', mode || 'chat', model || null, '', '', '', '', '{}', now, now],
+    });
     await maybeSaveMemory(req.user.id, message);
     await db.execute({ sql: 'INSERT OR REPLACE INTO messages (id, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)', args: [userMessageId, sessionId, 'user', message, now] });
     const memories = await db.execute({ sql: 'SELECT content FROM memories WHERE user_id = ? ORDER BY updated_at DESC LIMIT 12', args: [req.user.id] });

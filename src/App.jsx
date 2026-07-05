@@ -68,6 +68,15 @@ const canvasTypes = ['Document', 'Code', 'Plan', 'Project'];
 const canvasLanguages = ['javascript', 'jsx', 'typescript', 'tsx', 'html', 'css', 'sql', 'markdown'];
 const languageExtensions = { javascript: 'js', jsx: 'jsx', typescript: 'ts', tsx: 'tsx', html: 'html', css: 'css', sql: 'sql', markdown: 'md' };
 
+const skillHighlights = [
+  { id: 'pluto-code', name: 'Pluto Code', detail: 'Kode minimal, aman, dan tidak over-engineering.', icon: Code2, prompt: 'Review kode saya dengan mindset Pluto Code.' },
+  { id: 'critical-engineer', name: 'Critical Engineer', detail: 'Cari root cause, risiko, dan fix paling kecil.', icon: BrainCircuit, prompt: 'Analisis masalah ini seperti critical engineer.' },
+  { id: 'hackathon', name: 'Hackathon Strategist', detail: 'Susun MVP, demo flow, dan winning angle.', icon: Sparkles, prompt: 'Bantu saya menyusun MVP hackathon yang bisa menang.' },
+  { id: 'product', name: 'Product Strategist', detail: 'Ubah ide jadi produk dengan value jelas.', icon: FileText, prompt: 'Ubah ide saya jadi product plan yang jelas.' },
+  { id: 'demo', name: 'Demo Director', detail: 'Buat script demo dan jawaban untuk juri.', icon: Mic, prompt: 'Buatkan script demo 3 menit untuk produk saya.' },
+  { id: 'canvas', name: 'Canvas Assistant', detail: 'Baca canvas aktif dan bantu edit isinya.', icon: PenLine, prompt: 'Rapikan canvas aktif saya dan buat versinya lebih kuat.' },
+];
+
 function createCanvas(type = 'Document') {
   const id = crypto.randomUUID();
   const titles = { Document: 'Untitled Document', Code: 'Code Canvas', Plan: 'Plan Canvas', Project: 'HTML Website' };
@@ -378,6 +387,14 @@ export function App() {
     setAuthOpen(false);
   };
 
+  const handleGoogleAuth = async (credential) => {
+    const result = await authApi.googleLogin(credential);
+    saveAuth(result);
+    localStorage.setItem(WELCOME_AUTH_KEY, 'seen');
+    setAuthState(result);
+    setAuthOpen(false);
+  };
+
   const continueGuest = () => {
     localStorage.setItem(WELCOME_AUTH_KEY, 'seen');
     setAuthOpen(false);
@@ -622,7 +639,7 @@ export function App() {
         onSelectSession={setActiveId}
         onMode={selectMode}
       />
-      <AuthModal open={authOpen} mode={authMode} onMode={setAuthMode} onSubmit={handleAuth} onGuest={continueGuest} onClose={continueGuest} />
+      <AuthModal open={authOpen} mode={authMode} onMode={setAuthMode} onSubmit={handleAuth} onGoogle={handleGoogleAuth} onGuest={continueGuest} onClose={continueGuest} />
     </main>
   );
 }
@@ -885,10 +902,10 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
   };
 
   const downloadCanvas = () => {
-    const extension = activeCanvas.type === 'Project' ? 'html' : activeCanvas.type === 'Code' ? (languageExtensions[activeCanvas.language] || 'txt') : 'md';
+    const extension = activeCanvas.type === 'Project' ? 'html' : activeCanvas.type === 'Code' ? (languageExtensions[activeCanvas.language] || 'txt') : 'doc';
     const safeTitle = (activeCanvas.title || 'pluto-canvas').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pluto-canvas';
-    const content = activeCanvas.type === 'Project' ? buildProjectPreview(activeCanvas.files || []) : activeCanvas.content || '';
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const content = activeCanvas.type === 'Project' ? buildProjectPreview(activeCanvas.files || []) : activeCanvas.type === 'Code' ? activeCanvas.content || '' : buildDocDownload(activeCanvas);
+    const blob = new Blob([content], { type: activeCanvas.type === 'Code' ? 'text/plain;charset=utf-8' : 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -1029,6 +1046,18 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
   );
 }
 
+function buildDocDownload(canvas) {
+  const body = String(canvas.content || '')
+    .split('\n')
+    .map((line) => line.trim() ? `<p>${escapeHtml(line)}</p>` : '<p>&nbsp;</p>')
+    .join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(canvas.title || 'Pluto Document')}</title><style>body{font-family:Arial,sans-serif;line-height:1.65;color:#1f2937;padding:48px;}h1{font-size:28px;}p{margin:0 0 12px;}</style></head><body><h1>${escapeHtml(canvas.title || 'Pluto Document')}</h1>${body}</body></html>`;
+}
+
+function escapeHtml(value) {
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+}
+
 function ProjectEditor({ canvas, previewOpen, onUpdate }) {
   const files = canvas.files?.length ? canvas.files : createHtmlProjectFiles();
   const activeFile = files.find((file) => file.id === canvas.activeFileId) || files[0];
@@ -1078,9 +1107,9 @@ function buildProjectPreview(files) {
 }
 
 function CanvasPreview({ canvas }) {
-  if (!canvas.content?.trim()) return <div className="canvas-preview empty">Canvas masih kosong.</div>;
+  if (!canvas.content?.trim()) return <div className="canvas-preview doc-preview empty">Canvas masih kosong.</div>;
   if (canvas.type === 'Code') return <pre className="canvas-preview canvas-code"><code>{canvas.content}</code></pre>;
-  return <div className="canvas-preview"><MarkdownText text={canvas.content} /></div>;
+  return <div className="canvas-preview doc-preview"><article><h1>{canvas.title}</h1><MarkdownText text={canvas.content} /></article></div>;
 }
 
 function CanvasHistory({ versions, onRestore }) {
@@ -1393,11 +1422,18 @@ function CommandPalette({ open, sessions, token, onClose, onNew, onSettings, onW
   );
 }
 
-function AuthModal({ open, mode, onMode, onSubmit, onGuest, onClose }) {
+function AuthModal({ open, mode, onMode, onSubmit, onGoogle, onGuest, onClose }) {
   const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState(0);
   if (!open) return null;
+
+  const wizard = [
+    { title: 'Pluto AI Workspace', text: 'Chat, coding, canvas, file context, dan project preview dalam satu tempat.', items: ['Chat AI', 'AI Canvas', 'Project Workspace'] },
+    { title: 'Skill otomatis', text: 'Pluto memilih skill terbaik sesuai konteks, tanpa perlu kamu atur manual.', items: ['Pluto Code', 'Critical Engineer', 'Hackathon Strategist', 'Canvas Assistant'] },
+    { title: 'Cloud sync', text: 'Login untuk menyimpan session, canvas, memory, quota, dan project lintas perangkat.', items: ['Turso Sync', 'Quota Pro', 'Memory User'] },
+  ];
 
   const submit = async (event) => {
     event.preventDefault();
@@ -1413,28 +1449,70 @@ function AuthModal({ open, mode, onMode, onSubmit, onGuest, onClose }) {
     }
   };
 
+  const startGoogleLogin = () => {
+    setError('');
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (!clientId) return setError('Google Login belum dikonfigurasi. Tambahkan VITE_GOOGLE_CLIENT_ID.');
+    const run = () => {
+      window.google.accounts.id.initialize({
+        client_id: clientId,
+        callback: async (response) => {
+          setLoading(true);
+          try {
+            await onGoogle(response.credential);
+          } catch (error) {
+            setError(error.message);
+          } finally {
+            setLoading(false);
+          }
+        },
+      });
+      window.google.accounts.id.prompt();
+    };
+    if (window.google?.accounts?.id) return run();
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = run;
+    script.onerror = () => setError('Gagal memuat Google Login.');
+    document.head.appendChild(script);
+  };
+
   return (
     <div className="modal-backdrop auth-backdrop">
       <section className="auth-modal glass">
         <button className="modal-close" onClick={onClose}><X /></button>
         <div className="auth-hero">
-          <span>Pluto Cloud</span>
-          <h2>{mode === 'login' ? 'Masuk ke orbit Pluto' : 'Buat akun Pluto'}</h2>
-          <p>Sinkronkan sesi, workspace, dan riwayat chat di semua perangkat. Atau lanjut lokal tanpa akun.</p>
+          <span>{step < wizard.length ? `Welcome ${step + 1}/${wizard.length}` : 'Pluto Cloud'}</span>
+          <h2>{step < wizard.length ? wizard[step].title : mode === 'login' ? 'Masuk ke Pluto' : 'Buat akun Pluto'}</h2>
+          <p>{step < wizard.length ? wizard[step].text : 'Sinkronkan session, workspace, canvas, dan memory di semua perangkat.'}</p>
         </div>
-        <div className="auth-tabs">
-          <button className={mode === 'login' ? 'active' : ''} onClick={() => onMode('login')}>Masuk</button>
-          <button className={mode === 'signup' ? 'active' : ''} onClick={() => onMode('signup')}>Daftar</button>
-        </div>
-        <form onSubmit={submit} className="auth-form">
-          {mode === 'signup' && <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nama" />}
-          <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email" type="email" />
-          <input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" type="password" />
-          {mode === 'signup' && <input value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} placeholder="Konfirmasi password" type="password" />}
-          {error && <p className="auth-error">{error}</p>}
-          <button className="auth-submit" disabled={loading}>{loading ? 'Menghubungkan...' : mode === 'login' ? 'Masuk ke Pluto' : 'Buat akun Pluto'}</button>
-        </form>
-        <button className="guest-button" onClick={onGuest}>Lanjut tanpa login</button>
+        {step < wizard.length ? (
+          <>
+            <div className="wizard-chips">{wizard[step].items.map((item) => <span key={item}>{item}</span>)}</div>
+            <div className="wizard-dots">{wizard.map((_, index) => <i key={index} className={index === step ? 'active' : ''} />)}</div>
+            <div className="wizard-actions"><button onClick={onGuest}>Lewati</button><button onClick={() => setStep((value) => value + 1)}>{step === wizard.length - 1 ? 'Mulai login' : 'Lanjut'}</button></div>
+          </>
+        ) : (
+          <>
+            <button className="google-button" onClick={startGoogleLogin} disabled={loading}>Login dengan Google</button>
+            <div className="auth-divider"><span>atau email</span></div>
+            <div className="auth-tabs">
+              <button className={mode === 'login' ? 'active' : ''} onClick={() => onMode('login')}>Masuk</button>
+              <button className={mode === 'signup' ? 'active' : ''} onClick={() => onMode('signup')}>Daftar</button>
+            </div>
+            <form onSubmit={submit} className="auth-form">
+              {mode === 'signup' && <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nama" />}
+              <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="Email" type="email" />
+              <input value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Password" type="password" />
+              {mode === 'signup' && <input value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} placeholder="Konfirmasi password" type="password" />}
+              {error && <p className="auth-error">{error}</p>}
+              <button className="auth-submit" disabled={loading}>{loading ? 'Menghubungkan...' : mode === 'login' ? 'Masuk ke Pluto' : 'Buat akun Pluto'}</button>
+            </form>
+            <button className="guest-button" onClick={onGuest}>Lanjut tanpa login</button>
+          </>
+        )}
       </section>
     </div>
   );
@@ -1459,15 +1537,13 @@ function SettingsModal({ open, model, theme, sessions, authState, usage, memorie
         <div className="api-status"><Sparkles size={16} /> Status API OpenAI: {import.meta.env.VITE_OPENAI_API_BASE ? 'Endpoint siap' : 'Mode demo aktif'}</div>
         {authState?.user && usage && (
           <div className="usage-panel">
-            <strong>Quota Pluto</strong>
-            <span>Plan: {usage.plan === 'pro' ? 'Pluto Pro' : 'Free'}</span>
-            <div><b>{usage.usage.messagesToday}</b>/<small>{usage.limits.messagesPerDay}</small> pesan hari ini</div>
-            <div><b>{usage.usage.filesToday}</b>/<small>{usage.limits.filesPerDay}</small> file hari ini</div>
-            <div><b>{formatCompact(usage.usage.tokensMonth)}</b>/<small>{formatCompact(usage.limits.tokensPerMonth)}</small> token bulan ini</div>
-            <div><b>{usage.usage.canvases}</b>/<small>{usage.limits.canvases}</small> canvas</div>
-            <div><b>{usage.usage.projectCanvases}</b>/<small>{usage.limits.projectCanvases}</small> project canvas</div>
-            <div><b>{usage.usage.memories}</b>/<small>{usage.limits.memories}</small> memory</div>
-            {usage.plan !== 'pro' && <button onClick={onUpgrade}>Upgrade ke Pluto Pro</button>}
+            <div className="quota-head"><div><strong>Quota Pluto</strong><span>Plan: {usage.plan === 'pro' ? 'Pluto Pro' : 'Free'}</span></div><button onClick={onUpgrade}>{usage.plan === 'pro' ? 'Change Plan' : 'Upgrade Pro'}</button></div>
+            <QuotaBar label="Pesan hari ini" value={usage.usage.messagesToday} limit={usage.limits.messagesPerDay} />
+            <QuotaBar label="File hari ini" value={usage.usage.filesToday} limit={usage.limits.filesPerDay} />
+            <QuotaBar label="Token bulan ini" value={usage.usage.tokensMonth} limit={usage.limits.tokensPerMonth} compact />
+            <QuotaBar label="Canvas" value={usage.usage.canvases} limit={usage.limits.canvases} />
+            <QuotaBar label="Project canvas" value={usage.usage.projectCanvases} limit={usage.limits.projectCanvases} />
+            <QuotaBar label="Memory" value={usage.usage.memories} limit={usage.limits.memories} />
           </div>
         )}
         {authState?.user && (
@@ -1483,6 +1559,16 @@ function SettingsModal({ open, model, theme, sessions, authState, usage, memorie
         </div>
         <p className="settings-footnote">{sessions.length} sesi tersimpan lokal. Tidak perlu login.</p>
       </section>
+    </div>
+  );
+}
+
+function QuotaBar({ label, value, limit, compact = false }) {
+  const percent = limit ? Math.min(100, Math.round((value / limit) * 100)) : 0;
+  return (
+    <div className="quota-row">
+      <div><span>{label}</span><small>{compact ? formatCompact(value) : value} / {compact ? formatCompact(limit) : limit}</small></div>
+      <div className="quota-track"><i style={{ width: `${percent}%` }} /></div>
     </div>
   );
 }

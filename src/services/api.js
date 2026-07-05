@@ -35,6 +35,7 @@ export async function authRequest(path, options = {}, token) {
 export const authApi = {
   login: (payload) => authRequest('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   signup: (payload) => authRequest('/api/auth/signup', { method: 'POST', body: JSON.stringify(payload) }),
+  googleLogin: (credential) => authRequest('/api/auth/google', { method: 'POST', body: JSON.stringify({ credential }) }),
   sessions: (token) => authRequest('/api/sessions', {}, token),
   saveSession: (session, token, model) => authRequest('/api/sessions', { method: 'POST', body: JSON.stringify({ ...session, model }) }, token),
   saveMessage: (sessionId, message, token) => authRequest(`/api/sessions/${sessionId}/messages`, { method: 'POST', body: JSON.stringify(message) }, token),
