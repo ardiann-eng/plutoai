@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import JSZip from 'jszip';
 import {
   Bot,
   BrainCircuit,
@@ -71,19 +72,73 @@ const languageExtensions = { javascript: 'js', jsx: 'jsx', typescript: 'ts', tsx
 const skillHighlights = [
   { id: 'pluto-code', name: 'Pluto Code', detail: 'Kode minimal, aman, dan tidak over-engineering.', icon: Code2, prompt: 'Review kode saya dengan mindset Pluto Code.' },
   { id: 'critical-engineer', name: 'Critical Engineer', detail: 'Cari root cause, risiko, dan fix paling kecil.', icon: BrainCircuit, prompt: 'Analisis masalah ini seperti critical engineer.' },
+  { id: 'study', name: 'Study Mentor', detail: 'Bantu mata kuliah, tugas, laporan, ujian, dan konsep sulit.', icon: FileText, prompt: 'Bantu saya memahami materi kuliah ini dan kerjakan langkahnya.' },
+  { id: 'agency', name: 'Agency Producer', detail: 'Ubah brief client jadi video, campaign, script, dan production plan.', icon: Sparkles, prompt: 'Ubah brief client ini jadi konsep video dan production plan.' },
   { id: 'hackathon', name: 'Hackathon Strategist', detail: 'Susun MVP, demo flow, dan winning angle.', icon: Sparkles, prompt: 'Bantu saya menyusun MVP hackathon yang bisa menang.' },
   { id: 'product', name: 'Product Strategist', detail: 'Ubah ide jadi produk dengan value jelas.', icon: FileText, prompt: 'Ubah ide saya jadi product plan yang jelas.' },
   { id: 'demo', name: 'Demo Director', detail: 'Buat script demo dan jawaban untuk juri.', icon: Mic, prompt: 'Buatkan script demo 3 menit untuk produk saya.' },
   { id: 'canvas', name: 'Canvas Assistant', detail: 'Baca canvas aktif dan bantu edit isinya.', icon: PenLine, prompt: 'Rapikan canvas aktif saya dan buat versinya lebih kuat.' },
 ];
 
-function createCanvas(type = 'Document') {
+const projectTemplates = [
+  {
+    id: 'landing',
+    name: 'Landing Page',
+    detail: 'Hero premium, benefit cards, pricing CTA.',
+    title: 'Landing Page',
+    files: () => createProjectFiles({
+      title: 'Pluto Landing',
+      html: '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Pluto Landing</title>\n    <link rel="stylesheet" href="style.css" />\n  </head>\n  <body>\n    <nav><strong>Orbitly</strong><a>Features</a><a>Pricing</a><button>Start</button></nav>\n    <main class="hero">\n      <p class="eyebrow">AI workspace for fast teams</p>\n      <h1>Ship polished ideas before momentum dies.</h1>\n      <p class="lead">Plan, write, prototype, and present your next product from one focused canvas.</p>\n      <div class="actions"><button id="cta">Start free</button><button class="ghost">Watch demo</button></div>\n    </main>\n    <section class="cards"><article>Smart canvas</article><article>Project preview</article><article>Client-ready export</article></section>\n    <script src="main.js"></script>\n  </body>\n</html>',
+      css: ':root { font-family: Inter, system-ui, sans-serif; color: #f8fafc; background: #070712; }\n* { box-sizing: border-box; }\nbody { margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, #6d28d9, transparent 32%), #070712; }\nnav { display: flex; align-items: center; gap: 22px; padding: 24px clamp(20px, 5vw, 72px); }\nnav strong { margin-right: auto; }\nnav a { color: #cbd5e1; }\nbutton { border: 0; border-radius: 999px; padding: 12px 18px; color: white; background: linear-gradient(135deg, #8b5cf6, #2563eb); }\n.hero { width: min(980px, calc(100% - 40px)); margin: 64px auto 36px; padding: clamp(32px, 7vw, 82px); border: 1px solid rgba(255,255,255,.12); border-radius: 36px; background: rgba(255,255,255,.06); box-shadow: 0 30px 90px rgba(0,0,0,.35); }\n.eyebrow { color: #c4b5fd; text-transform: uppercase; letter-spacing: .14em; font-size: 12px; font-weight: 800; }\nh1 { max-width: 780px; margin: 0; font-size: clamp(46px, 9vw, 104px); line-height: .9; letter-spacing: -.07em; }\n.lead { max-width: 620px; color: #cbd5e1; font-size: 18px; line-height: 1.65; }\n.actions { display: flex; gap: 12px; flex-wrap: wrap; }\n.ghost { background: rgba(255,255,255,.1); }\n.cards { width: min(980px, calc(100% - 40px)); margin: 0 auto 48px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }\n.cards article { padding: 22px; border-radius: 24px; background: rgba(255,255,255,.08); color: #e2e8f0; }\n@media (max-width: 720px) { nav a { display: none; } .cards { grid-template-columns: 1fr; } }',
+      js: "document.getElementById('cta')?.addEventListener('click', () => alert('Welcome aboard.'));",
+    }),
+  },
+  {
+    id: 'portfolio',
+    name: 'Portfolio',
+    detail: 'Profil kreator, karya pilihan, kontak.',
+    title: 'Portfolio Site',
+    files: () => createProjectFiles({
+      title: 'Portfolio',
+      html: '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Portfolio</title>\n    <link rel="stylesheet" href="style.css" />\n  </head>\n  <body>\n    <main>\n      <section class="intro"><span>Available for projects</span><h1>Designer building clean digital experiences.</h1><p>I turn ideas into sharp websites, visuals, and product stories.</p></section>\n      <section class="work"><article>Brand System</article><article>Landing Page</article><article>Video Campaign</article></section>\n      <a class="contact" href="mailto:hello@example.com">hello@example.com</a>\n    </main>\n    <script src="main.js"></script>\n  </body>\n</html>',
+      css: 'body { margin: 0; min-height: 100vh; font-family: Georgia, serif; color: #1f2937; background: #f6efe7; }\nmain { width: min(1040px, calc(100% - 36px)); margin: 0 auto; padding: 56px 0; }\n.intro { display: grid; gap: 18px; min-height: 56vh; align-content: center; }\n.intro span { width: max-content; padding: 8px 12px; border: 1px solid #d6c2aa; border-radius: 999px; color: #8a5a2b; }\nh1 { max-width: 820px; margin: 0; font-size: clamp(46px, 10vw, 116px); line-height: .9; letter-spacing: -.06em; }\np { max-width: 520px; color: #6b5a49; font-size: 18px; line-height: 1.7; }\n.work { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }\n.work article { min-height: 220px; display: grid; align-content: end; padding: 20px; border-radius: 28px; background: #111827; color: white; }\n.contact { display: inline-block; margin-top: 28px; color: #111827; font-weight: 700; }\n@media (max-width: 760px) { .work { grid-template-columns: 1fr; } }',
+      js: "console.log('Portfolio ready');",
+    }),
+  },
+  {
+    id: 'saas',
+    name: 'SaaS UI',
+    detail: 'Dashboard SaaS modern dengan metrics.',
+    title: 'SaaS Dashboard',
+    files: () => createProjectFiles({
+      title: 'SaaS UI',
+      html: '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>SaaS UI</title>\n    <link rel="stylesheet" href="style.css" />\n  </head>\n  <body>\n    <aside><strong>NovaCRM</strong><a class="active">Dashboard</a><a>Leads</a><a>Reports</a></aside>\n    <main><header><div><span>Revenue</span><h1>$84,240</h1></div><button id="refresh">Refresh</button></header><section class="grid"><article>Conversion 18.4%</article><article>Active users 12,841</article><article>Pipeline $240K</article></section><section class="panel">Weekly performance chart</section></main>\n    <script src="main.js"></script>\n  </body>\n</html>',
+      css: 'body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; font-family: Inter, system-ui, sans-serif; color: #0f172a; background: #eef2ff; }\naside { padding: 24px; display: grid; align-content: start; gap: 14px; background: #0f172a; color: white; }\naside strong { margin-bottom: 24px; font-size: 22px; }\naside a { padding: 12px; color: #cbd5e1; border-radius: 14px; }\naside .active { color: white; background: rgba(255,255,255,.12); }\nmain { padding: clamp(18px, 4vw, 42px); }\nheader { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 28px; border-radius: 30px; background: white; box-shadow: 0 20px 60px rgba(79,70,229,.14); }\nspan { color: #64748b; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }\nh1 { margin: 4px 0 0; font-size: clamp(42px, 8vw, 78px); letter-spacing: -.06em; }\nbutton { border: 0; border-radius: 14px; padding: 12px 16px; color: white; background: #4f46e5; }\n.grid { margin-top: 18px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }\n.grid article, .panel { padding: 24px; border-radius: 24px; background: white; }\n.panel { min-height: 260px; margin-top: 18px; display: grid; place-items: center; color: #64748b; }\n@media (max-width: 800px) { body { grid-template-columns: 1fr; } aside { grid-auto-flow: column; overflow: auto; } .grid { grid-template-columns: 1fr; } }',
+      js: "document.getElementById('refresh')?.addEventListener('click', () => alert('Dashboard refreshed.'));",
+    }),
+  },
+  {
+    id: 'admin',
+    name: 'Admin Dashboard',
+    detail: 'Admin panel tabel, status, dan activity.',
+    title: 'Admin Dashboard',
+    files: () => createProjectFiles({
+      title: 'Admin Dashboard',
+      html: '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Admin Dashboard</title>\n    <link rel="stylesheet" href="style.css" />\n  </head>\n  <body>\n    <main><header><h1>Operations</h1><button id="export">Export</button></header><section class="stats"><article>Orders 1,284</article><article>Tickets 42</article><article>Uptime 99.9%</article></section><table><tr><th>User</th><th>Status</th><th>Plan</th></tr><tr><td>Alya</td><td>Active</td><td>Pro</td></tr><tr><td>Raka</td><td>Pending</td><td>Free</td></tr></table></main>\n    <script src="main.js"></script>\n  </body>\n</html>',
+      css: 'body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, sans-serif; color: #172033; background: #f8fafc; }\nmain { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0; }\nheader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }\nh1 { font-size: clamp(34px, 6vw, 64px); letter-spacing: -.05em; margin: 0; }\nbutton { border: 0; border-radius: 14px; padding: 12px 16px; color: white; background: #111827; }\n.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }\n.stats article { padding: 22px; border-radius: 22px; background: white; box-shadow: 0 16px 40px rgba(15,23,42,.08); }\ntable { width: 100%; margin-top: 18px; border-collapse: collapse; overflow: hidden; border-radius: 22px; background: white; box-shadow: 0 16px 40px rgba(15,23,42,.08); }\nth, td { padding: 16px; text-align: left; border-bottom: 1px solid #e2e8f0; }\nth { color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }\n@media (max-width: 720px) { .stats { grid-template-columns: 1fr; } table { display: block; overflow-x: auto; } }',
+      js: "document.getElementById('export')?.addEventListener('click', () => alert('Export started.'));",
+    }),
+  },
+];
+
+function createCanvas(type = 'Document', templateId = 'landing') {
   const id = crypto.randomUUID();
   const titles = { Document: 'Untitled Document', Code: 'Code Canvas', Plan: 'Plan Canvas', Project: 'HTML Website' };
-  const files = type === 'Project' ? createHtmlProjectFiles() : [];
+  const template = projectTemplates.find((item) => item.id === templateId) || projectTemplates[0];
+  const files = type === 'Project' ? template.files() : [];
   return {
     id,
-    title: titles[type] || 'Untitled Canvas',
+    title: type === 'Project' ? template.title : titles[type] || 'Untitled Canvas',
     type,
     language: type === 'Code' ? 'javascript' : 'markdown',
     content: '',
@@ -98,24 +153,28 @@ function createCanvas(type = 'Document') {
 }
 
 function createHtmlProjectFiles() {
+  return projectTemplates[0].files();
+}
+
+function createProjectFiles({ title, html, css, js }) {
   return [
     {
       id: crypto.randomUUID(),
       path: 'index.html',
       language: 'html',
-      content: '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>Pluto Project</title>\n    <link rel="stylesheet" href="style.css" />\n  </head>\n  <body>\n    <main class="hero">\n      <p>Pluto Canvas</p>\n      <h1>Build something cosmic.</h1>\n      <button id="cta">Launch</button>\n    </main>\n    <script src="main.js"></script>\n  </body>\n</html>',
+      content: html.replace('<title>Pluto Landing</title>', `<title>${title}</title>`),
     },
     {
       id: crypto.randomUUID(),
       path: 'style.css',
       language: 'css',
-      content: ':root {\n  font-family: Inter, system-ui, sans-serif;\n  color: #f8f4ff;\n  background: #080615;\n}\n\nbody {\n  margin: 0;\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n}\n\n.hero {\n  width: min(720px, calc(100% - 32px));\n  padding: 56px;\n  border: 1px solid rgba(255,255,255,.12);\n  border-radius: 32px;\n  background: linear-gradient(160deg, rgba(255,255,255,.08), rgba(255,255,255,.03));\n}\n\n.hero p { color: #c4b5fd; }\n.hero h1 { font-size: clamp(42px, 8vw, 88px); line-height: .95; margin: 0 0 24px; }\nbutton { padding: 12px 18px; border: 0; border-radius: 999px; color: white; background: linear-gradient(135deg, #7c3aed, #2563eb); }',
+      content: css,
     },
     {
       id: crypto.randomUUID(),
       path: 'main.js',
       language: 'javascript',
-      content: "document.getElementById('cta')?.addEventListener('click', () => {\n  alert('Welcome to Pluto.');\n});",
+      content: js,
     },
   ];
 }
@@ -721,7 +780,7 @@ function ModelSelector({ value, onChange }) {
   return <CustomSelect value={value} options={MODEL_OPTIONS} onChange={onChange} className="model-select" />;
 }
 
-function CustomSelect({ value, options, onChange, className = '' }) {
+function CustomSelect({ value, options, onChange, className = '', labels = {} }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -736,14 +795,14 @@ function CustomSelect({ value, options, onChange, className = '' }) {
   return (
     <div className={`custom-select ${className}`} ref={ref}>
       <button className="select-trigger" type="button" onClick={() => setOpen((value) => !value)}>
-        <span>{value}</span>
+        <span>{labels[value] || value}</span>
         <ChevronDown size={16} className={open ? 'rotate' : ''} />
       </button>
       {open && (
         <div className="select-menu glass">
           {options.map((option) => (
             (() => {
-              const item = typeof option === 'string' ? { name: option } : option;
+              const item = typeof option === 'string' ? { name: option, label: labels[option] || option } : option;
               return (
             <button
               key={item.id || item.name}
@@ -754,7 +813,7 @@ function CustomSelect({ value, options, onChange, className = '' }) {
                 setOpen(false);
               }}
             >
-              <span className="select-copy"><strong>{item.name}</strong>{item.detail && <small>{item.detail}</small>}</span>
+              <span className="select-copy"><strong>{item.label || item.name}</strong>{item.detail && <small>{item.detail}</small>}</span>
               {item.badge && <em>{item.badge}</em>}
               {item.name === value && <Check size={15} />}
             </button>
@@ -878,6 +937,7 @@ function Composer({ value, mode, imageStyle, disabled, isTyping, onChange, onSen
 
 function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave, onOpen, onComposer, onSend, onStop, onAttach, onVoice }) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [pendingProjectPatch, setPendingProjectPatch] = useState(null);
   const canvases = session.canvases?.length ? session.canvases : [createCanvas('Document')];
   const activeCanvas = canvases.find((canvas) => canvas.id === session.activeCanvasId) || canvases[0];
   const lastAssistant = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim());
@@ -901,21 +961,27 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
     onCloudSave?.({ ...session, canvases: nextCanvases, activeCanvasId: activeCanvas.id });
   };
 
-  const downloadCanvas = () => {
-    const extension = activeCanvas.type === 'Project' ? 'html' : activeCanvas.type === 'Code' ? (languageExtensions[activeCanvas.language] || 'txt') : 'doc';
+  const downloadCanvas = async () => {
+    if (activeCanvas.type === 'Project') {
+      const safeTitle = getSafeFileName(activeCanvas.title || 'pluto-project');
+      const zip = new JSZip();
+      const files = activeCanvas.files?.length ? activeCanvas.files : createHtmlProjectFiles();
+      files.forEach((file) => zip.file(normalizeProjectPath(file.path), file.content || ''));
+      zip.file('preview.html', buildProjectPreview(files));
+      const blob = await zip.generateAsync({ type: 'blob' });
+      triggerDownload(blob, `${safeTitle}.zip`);
+      return;
+    }
+
+    const extension = activeCanvas.type === 'Code' ? (languageExtensions[activeCanvas.language] || 'txt') : 'doc';
     const safeTitle = (activeCanvas.title || 'pluto-canvas').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pluto-canvas';
-    const content = activeCanvas.type === 'Project' ? buildProjectPreview(activeCanvas.files || []) : activeCanvas.type === 'Code' ? activeCanvas.content || '' : buildDocDownload(activeCanvas);
+    const content = activeCanvas.type === 'Code' ? activeCanvas.content || '' : buildDocDownload(activeCanvas);
     const blob = new Blob([content], { type: activeCanvas.type === 'Code' ? 'text/plain;charset=utf-8' : 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${safeTitle}.${extension}`;
-    link.click();
-    URL.revokeObjectURL(url);
+    triggerDownload(blob, `${safeTitle}.${extension}`);
   };
 
-  const addCanvas = () => {
-    const next = createCanvas('Document');
+  const addCanvas = (type = 'Document', templateId = 'landing') => {
+    const next = createCanvas(type, templateId);
     saveCanvases([next, ...canvases], next.id);
     onOpen(true);
   };
@@ -941,12 +1007,21 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
 
   const applyAssistant = (mode) => {
     if (!lastAssistant) return;
+    if (activeCanvas.type === 'Project') {
+      const patch = parseProjectPatch(lastAssistant.content, activeCanvas.files || []);
+      if (patch.length) {
+        setPendingProjectPatch({ mode, files: patch });
+        return;
+      }
+    }
     const content = extractCanvasPayload(lastAssistant.content, activeCanvas.type);
     const snapshot = {
       content: activeCanvas.content || '',
       title: activeCanvas.title,
       type: activeCanvas.type,
       language: activeCanvas.language,
+      files: activeCanvas.files,
+      activeFileId: activeCanvas.activeFileId,
       createdAt: Date.now(),
     };
     updateCanvas({
@@ -982,6 +1057,19 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
 
   const restoreVersion = (version) => updateCanvas({ ...version, versions: activeCanvas.versions || [] });
 
+  const applyProjectPatch = () => {
+    if (!pendingProjectPatch?.files?.length) return;
+    const currentFiles = activeCanvas.files?.length ? activeCanvas.files : createHtmlProjectFiles();
+    const nextFiles = mergeProjectFiles(currentFiles, pendingProjectPatch.files, pendingProjectPatch.mode);
+    const snapshot = { content: activeCanvas.content || '', title: activeCanvas.title, type: activeCanvas.type, language: activeCanvas.language, files: currentFiles, activeFileId: activeCanvas.activeFileId, createdAt: Date.now() };
+    updateCanvas({
+      files: nextFiles,
+      activeFileId: nextFiles[0]?.id || null,
+      versions: [snapshot, ...(activeCanvas.versions || [])].slice(0, 10),
+    });
+    setPendingProjectPatch(null);
+  };
+
   const captureSelection = (event) => {
     const { selectionStart, selectionEnd } = event.target;
     updateCanvas({ selection: selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd, text: activeCanvas.content.slice(selectionStart, selectionEnd) } : null });
@@ -1002,7 +1090,7 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
           </div>
         </div>
         <div className="canvas-stage-actions">
-          <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={(type) => updateCanvas({ type, language: type === 'Code' ? 'javascript' : 'markdown' })} />
+          <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={(type) => updateCanvas(type === 'Project' ? { ...createCanvas('Project'), id: activeCanvas.id, createdAt: activeCanvas.createdAt, versions: activeCanvas.versions || [] } : { type, language: type === 'Code' ? 'javascript' : 'markdown' })} />
           {activeCanvas.type === 'Code' && <CustomSelect value={activeCanvas.language || 'javascript'} options={canvasLanguages} onChange={(language) => updateCanvas({ language })} />}
           <button onClick={() => setPreviewOpen((value) => !value)}><FileText size={15} /> {previewOpen ? 'Edit' : 'Preview'}</button>
           <button onClick={saveCanvas}><Check size={15} /> Save</button>
@@ -1041,7 +1129,8 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
         onAttach={onAttach}
         onVoice={onVoice}
       />
-      <CanvasAIDock assistant={lastAssistant} isTyping={isTyping} hasSelection={Boolean(activeCanvas.selection)} canUndo={Boolean(activeCanvas.versions?.length)} onUndo={undoCanvas} onReplace={() => applyAssistant('replace')} onAppend={() => applyAssistant('append')} onSelection={applyToSelection} onNewCanvas={createCanvasFromAssistant} />
+      <CanvasAIDock assistant={lastAssistant} isTyping={isTyping} hasSelection={Boolean(activeCanvas.selection)} canUndo={Boolean(activeCanvas.versions?.length)} isProject={activeCanvas.type === 'Project'} onUndo={undoCanvas} onReplace={() => applyAssistant('replace')} onAppend={() => applyAssistant('append')} onSelection={applyToSelection} onNewCanvas={createCanvasFromAssistant} />
+      {pendingProjectPatch && <ProjectDiffPreview currentFiles={activeCanvas.files || []} patch={pendingProjectPatch.files} mode={pendingProjectPatch.mode} onCancel={() => setPendingProjectPatch(null)} onApply={applyProjectPatch} />}
     </section>
   );
 }
@@ -1052,6 +1141,24 @@ function buildDocDownload(canvas) {
     .map((line) => line.trim() ? `<p>${escapeHtml(line)}</p>` : '<p>&nbsp;</p>')
     .join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(canvas.title || 'Pluto Document')}</title><style>body{font-family:Arial,sans-serif;line-height:1.65;color:#1f2937;padding:48px;}h1{font-size:28px;}p{margin:0 0 12px;}</style></head><body><h1>${escapeHtml(canvas.title || 'Pluto Document')}</h1>${body}</body></html>`;
+}
+
+function getSafeFileName(value) {
+  return String(value || 'pluto-canvas').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pluto-canvas';
+}
+
+function normalizeProjectPath(path) {
+  const safePath = String(path || 'untitled.txt').replaceAll('\\', '/').split('/').filter(Boolean).join('/');
+  return safePath.replaceAll('..', '') || 'untitled.txt';
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function escapeHtml(value) {
@@ -1106,6 +1213,85 @@ function buildProjectPreview(files) {
     .replace('</body>', `<script>${js}<\/script></body>`);
 }
 
+function parseProjectPatch(text, currentFiles = []) {
+  const source = String(text || '').replace(/```[a-zA-Z0-9_-]*\n?/g, '').trim();
+  const markers = [...source.matchAll(/^FILE:\s*(.+?)\s*$/gim)];
+  if (!markers.length) return [];
+  return markers.map((match, index) => {
+    const start = match.index + match[0].length;
+    const end = markers[index + 1]?.index ?? source.length;
+    const path = normalizeProjectPath(match[1]);
+    const content = source.slice(start, end).replace(/^\s*```\w*\s*/i, '').replace(/```\s*$/i, '').trim();
+    const current = currentFiles.find((file) => normalizeProjectPath(file.path) === path);
+    return { path, content, language: getLanguageFromPath(path), status: current ? 'modified' : 'created', previous: current?.content || '' };
+  }).filter((file) => file.path && file.content);
+}
+
+function mergeProjectFiles(currentFiles, patchFiles, mode = 'replace') {
+  const next = currentFiles.map((file) => ({ ...file }));
+  patchFiles.forEach((patchFile) => {
+    const index = next.findIndex((file) => normalizeProjectPath(file.path) === normalizeProjectPath(patchFile.path));
+    if (index >= 0) {
+      next[index] = { ...next[index], content: mode === 'append' && next[index].content ? `${next[index].content.trim()}\n\n${patchFile.content}` : patchFile.content, language: getLanguageFromPath(patchFile.path) };
+    } else {
+      next.push({ id: crypto.randomUUID(), path: patchFile.path, language: patchFile.language || getLanguageFromPath(patchFile.path), content: patchFile.content });
+    }
+  });
+  return next;
+}
+
+function getLanguageFromPath(path) {
+  if (path.endsWith('.css')) return 'css';
+  if (path.endsWith('.html')) return 'html';
+  if (path.endsWith('.sql')) return 'sql';
+  if (path.endsWith('.md')) return 'markdown';
+  return 'javascript';
+}
+
+function ProjectDiffPreview({ currentFiles, patch, mode, onCancel, onApply }) {
+  const previewFiles = patch.map((file) => {
+    const current = currentFiles.find((item) => normalizeProjectPath(item.path) === normalizeProjectPath(file.path));
+    const previous = current?.content || '';
+    const next = mode === 'append' && previous ? `${previous.trim()}\n\n${file.content}` : file.content;
+    return { ...file, previous, next, status: current ? 'Modified' : 'Created', diff: buildLineDiff(previous, next) };
+  });
+  return (
+    <div className="diff-backdrop">
+      <section className="project-diff glass">
+        <div className="diff-head">
+          <div><span>Apply Preview</span><h2>Review perubahan AI</h2><p>Periksa file sebelum Pluto menimpa project. Aman seperti Cursor/Figma: preview dulu, apply jika cocok.</p></div>
+          <button className="modal-close" onClick={onCancel}><X size={17} /></button>
+        </div>
+        <div className="diff-list">
+          {previewFiles.map((file) => (
+            <article className="diff-file" key={file.path}>
+              <div className="diff-file-head"><strong>{file.path}</strong><span>{file.status}</span></div>
+              <div className="diff-columns">
+                <div className="diff-pane"><span>Before</span><pre>{file.diff.before.map((line, index) => <code key={`${file.path}-before-${index}`} className={line.changed ? 'diff-line removed' : 'diff-line'}>{line.text || ' '}</code>)}</pre></div>
+                <div className="diff-pane"><span>After</span><pre>{file.diff.after.map((line, index) => <code key={`${file.path}-after-${index}`} className={line.changed ? 'diff-line added' : 'diff-line'}>{line.text || ' '}</code>)}</pre></div>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="diff-actions">
+          <button onClick={onCancel}>Cancel</button>
+          <button onClick={onApply}>Apply {previewFiles.length} file</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function buildLineDiff(previous, next) {
+  const before = String(previous || '').split('\n');
+  const after = String(next || '').split('\n');
+  const max = Math.max(before.length, after.length);
+  return {
+    before: Array.from({ length: max }, (_, index) => ({ text: before[index] ?? '', changed: before[index] !== after[index] })),
+    after: Array.from({ length: max }, (_, index) => ({ text: after[index] ?? '', changed: before[index] !== after[index] })),
+  };
+}
+
 function CanvasPreview({ canvas }) {
   if (!canvas.content?.trim()) return <div className="canvas-preview doc-preview empty">Canvas masih kosong.</div>;
   if (canvas.type === 'Code') return <pre className="canvas-preview canvas-code"><code>{canvas.content}</code></pre>;
@@ -1136,7 +1322,7 @@ function extractCanvasPayload(text, type) {
   return text.replace(/```(?:\w+)?\n([\s\S]*?)```/g, '$1').trim();
 }
 
-function CanvasAIDock({ assistant, isTyping, hasSelection, canUndo, onUndo, onReplace, onAppend, onSelection, onNewCanvas }) {
+function CanvasAIDock({ assistant, isTyping, hasSelection, canUndo, isProject, onUndo, onReplace, onAppend, onSelection, onNewCanvas }) {
   if (!assistant && !isTyping) return null;
   return (
     <aside className="canvas-ai-dock glass">
@@ -1148,8 +1334,8 @@ function CanvasAIDock({ assistant, isTyping, hasSelection, canUndo, onUndo, onRe
       </div>
       {assistant && (
         <div className="dock-actions">
-          <button onClick={onReplace}>Replace Canvas</button>
-          <button onClick={onAppend}>Append</button>
+          <button onClick={onReplace}>{isProject ? 'Preview Apply' : 'Replace Canvas'}</button>
+          <button onClick={onAppend}>{isProject ? 'Preview Append' : 'Append'}</button>
           <button onClick={onSelection} disabled={!hasSelection}>Apply Selection</button>
           <button onClick={onNewCanvas}>New Canvas</button>
           <button onClick={onUndo} disabled={!canUndo}>Undo</button>
@@ -1162,6 +1348,8 @@ function CanvasAIDock({ assistant, isTyping, hasSelection, canUndo, onUndo, onRe
 function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
+  const [newType, setNewType] = useState('Document');
+  const [templateId, setTemplateId] = useState(projectTemplates[0].id);
   const filteredCanvases = canvases.filter((canvas) => {
     const matchesType = filter === 'All' || canvas.type === filter;
     const matchesQuery = `${canvas.title} ${canvas.content}`.toLowerCase().includes(query.toLowerCase());
@@ -1172,6 +1360,12 @@ function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete
     ['Document', canvases.filter((canvas) => canvas.type === 'Document').length],
     ['Code', canvases.filter((canvas) => canvas.type === 'Code').length],
   ];
+  const smartStarters = [
+    { title: 'Buat laporan kuliah', text: 'Canvas dokumen untuk struktur tugas, konsep, dan checklist dosen.', type: 'Document' },
+    { title: 'Ubah brief client', text: 'Canvas rencana untuk campaign, script video, dan timeline produksi.', type: 'Plan' },
+    { title: 'Bikin landing page', text: 'Project siap edit dengan preview, ZIP export, dan apply preview.', type: 'Project', templateId: 'landing' },
+    { title: 'Bangun portfolio', text: 'Project portfolio mobile-friendly untuk kreator atau freelancer.', type: 'Project', templateId: 'portfolio' },
+  ];
 
   return (
     <section className="workspace-home">
@@ -1180,15 +1374,24 @@ function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete
         <h1>Bangun ide di canvas Pluto</h1>
         <p>Pilih canvas yang sudah ada atau buat ruang kerja baru untuk dokumen, kode, dan rencana. Chat AI akan jadi asisten kerja di atas canvas.</p>
         <div className="workspace-hero-actions">
-          <button onClick={onCreate}><Plus size={17} /> Buat Canvas</button>
+          <button onClick={() => onCreate(newType, templateId)}><Plus size={17} /> Buat Canvas</button>
           <button onClick={() => canvases[0] && onOpenCanvas(canvases[0].id)}>Buka Terakhir</button>
         </div>
+        <div className="workspace-create-panel">
+          <div><span>Canvas type</span><CustomSelect value={newType} options={canvasTypes} onChange={setNewType} /></div>
+          {newType === 'Project' && <div><span>Project template</span><CustomSelect value={templateId} options={projectTemplates.map((template) => template.id)} labels={Object.fromEntries(projectTemplates.map((template) => [template.id, template.name]))} onChange={setTemplateId} /></div>}
+        </div>
+        {newType === 'Project' && (
+          <div className="template-grid">
+            {projectTemplates.map((template) => <button key={template.id} className={template.id === templateId ? 'active' : ''} onClick={() => setTemplateId(template.id)}><strong>{template.name}</strong><span>{template.detail}</span></button>)}
+          </div>
+        )}
       </div>
       <div className="workspace-stats">
         {stats.map(([label, value]) => <div className="glass" key={label}><span>{label}</span><strong>{value}</strong></div>)}
       </div>
       <div className="workspace-library glass">
-        <div className="library-head"><span>Canvas Library</span><button onClick={onCreate}><Plus size={15} /> New</button></div>
+        <div className="library-head"><span>Canvas Library</span><button onClick={() => onCreate(newType, templateId)}><Plus size={15} /> New</button></div>
         <div className="library-tools">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari canvas..." />
           <CustomSelect value={filter} options={['All', ...canvasTypes]} onChange={setFilter} />
@@ -1206,7 +1409,7 @@ function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete
                 <button onClick={() => onDelete(canvas.id)} disabled={canvases.length <= 1}>Delete</button>
               </div>
             </article>
-          )) : <div className="library-empty"><strong>Tidak ada canvas.</strong><p>Coba ubah filter atau buat canvas baru.</p><button onClick={onCreate}><Plus size={15} /> Buat Canvas</button></div>}
+          )) : <div className="library-empty smart-empty"><strong>Mulai dari kebutuhan nyata.</strong><p>Pilih starter di bawah, atau buat canvas kosong kalau sudah tahu mau menulis apa.</p><div>{smartStarters.map((starter) => <button key={starter.title} onClick={() => onCreate(starter.type, starter.templateId || templateId)}><strong>{starter.title}</strong><span>{starter.text}</span></button>)}</div><button onClick={() => onCreate(newType, templateId)}><Plus size={15} /> Canvas kosong</button></div>}
         </div>
       </div>
     </section>
@@ -1345,7 +1548,7 @@ function CanvasBoard({ session, onUpdate }) {
       </div>
       <div className="canvas-controls">
         <CustomSelect value={activeCanvas.title} options={canvases.map((canvas) => canvas.title)} onChange={(title) => onUpdate({ activeCanvasId: canvases.find((canvas) => canvas.title === title)?.id || activeCanvas.id })} />
-        <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={(type) => updateCanvas({ type, language: type === 'Code' ? 'javascript' : 'markdown' })} />
+        <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={(type) => updateCanvas(type === 'Project' ? { ...createCanvas('Project'), id: activeCanvas.id, createdAt: activeCanvas.createdAt, versions: activeCanvas.versions || [] } : { type, language: type === 'Code' ? 'javascript' : 'markdown' })} />
       </div>
       <input className="canvas-title-input" value={activeCanvas.title} onChange={(event) => updateCanvas({ title: event.target.value || 'Untitled Canvas' })} placeholder="Nama canvas" />
       <textarea
@@ -1430,9 +1633,10 @@ function AuthModal({ open, mode, onMode, onSubmit, onGoogle, onGuest, onClose })
   if (!open) return null;
 
   const wizard = [
-    { title: 'Pluto AI Workspace', text: 'Chat, coding, canvas, file context, dan project preview dalam satu tempat.', items: ['Chat AI', 'AI Canvas', 'Project Workspace'] },
-    { title: 'Skill otomatis', text: 'Pluto memilih skill terbaik sesuai konteks, tanpa perlu kamu atur manual.', items: ['Pluto Code', 'Critical Engineer', 'Hackathon Strategist', 'Canvas Assistant'] },
-    { title: 'Cloud sync', text: 'Login untuk menyimpan session, canvas, memory, quota, dan project lintas perangkat.', items: ['Turso Sync', 'Quota Pro', 'Memory User'] },
+    { title: 'Mulai kerja dari ide kosong', text: 'Tulis tugas kuliah, brief client, kode, rencana produk, atau draft konten. Pluto bantu pecah jadi langkah yang bisa langsung dikerjakan.', items: ['Tugas kuliah', 'Brief client', 'Kode', 'Konten'] },
+    { title: 'Bukan cuma chat, ada workspace', text: 'Jawaban penting bisa disimpan ke canvas. Kamu bisa edit dokumen, bikin project website, preview hasil, lalu download saat selesai.', items: ['Canvas', 'Project preview', 'Download ZIP', 'History'] },
+    { title: 'Skill otomatis sesuai kebutuhan', text: 'Pluto menyesuaikan gaya bantuan: tutor kuliah, producer agency, coder, product strategist, atau demo coach. Tidak perlu pilih manual.', items: ['Study Mentor', 'Agency Producer', 'Pluto Code', 'Demo Coach'] },
+    { title: 'Simpan progres saat login', text: 'Login membuat chat, canvas, project, dan preferensi tetap tersimpan lintas perangkat. Mode tamu tetap bisa dipakai untuk coba cepat.', items: ['Chat tersimpan', 'Canvas tersimpan', 'Mode tamu', 'Privasi'] },
   ];
 
   const submit = async (event) => {
@@ -1484,9 +1688,9 @@ function AuthModal({ open, mode, onMode, onSubmit, onGoogle, onGuest, onClose })
       <section className="auth-modal glass">
         <button className="modal-close" onClick={onClose}><X /></button>
         <div className="auth-hero">
-          <span>{step < wizard.length ? `Welcome ${step + 1}/${wizard.length}` : 'Pluto Cloud'}</span>
+          <span>{step < wizard.length ? `Welcome ${step + 1}/${wizard.length}` : 'Mulai pakai Pluto'}</span>
           <h2>{step < wizard.length ? wizard[step].title : mode === 'login' ? 'Masuk ke Pluto' : 'Buat akun Pluto'}</h2>
-          <p>{step < wizard.length ? wizard[step].text : 'Sinkronkan session, workspace, canvas, dan memory di semua perangkat.'}</p>
+          <p>{step < wizard.length ? wizard[step].text : 'Masuk untuk menyimpan chat, canvas, project, dan preferensi. Kalau mau coba dulu, lanjut tanpa login juga bisa.'}</p>
         </div>
         {step < wizard.length ? (
           <>

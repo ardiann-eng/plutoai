@@ -20,10 +20,10 @@
     "dotenv": "latest",
     "express": "latest",
     "jsonwebtoken": "latest",
-    "vite": "latest",
+    "jszip": "^3.10.1",
+    "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
-  },
-  "devDependencies": {}
+    "vite": "latest"
+  }
 }
