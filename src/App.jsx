@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   Check,
   ChevronDown,
+  ChevronRight,
   Code2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -34,6 +35,7 @@ const STORAGE_KEY = 'pluto.sessions.v1';
 const MODEL_KEY = 'pluto.model.v1';
 const THEME_KEY = 'pluto.theme.v1';
 const WELCOME_AUTH_KEY = 'pluto.auth.welcome.v1';
+const PROFILE_KEY = 'pluto.profile.v1';
 
 function normalizeTheme(value) {
   if (value === 'Light' || value === 'Orbit violet') return 'Light';
@@ -231,8 +233,12 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [historyQuery, setHistoryQuery] = useState('');
   const [authState, setAuthState] = useState(() => getStoredAuth());
-  const [authOpen, setAuthOpen] = useState(() => !localStorage.getItem(WELCOME_AUTH_KEY));
+  const [profile, setProfile] = useState(() => loadStored(PROFILE_KEY, { displayName: '', role: '', source: '', goal: '', onboardingDone: false }));
+  const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('login');
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !loadStored(PROFILE_KEY, null)?.onboardingDone);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [usage, setUsage] = useState(null);
   const [memories, setMemories] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
@@ -255,6 +261,7 @@ export function App() {
   }, [activeSession?.id, activeSession?.mode, isMobile]);
 
   useEffect(() => saveStored(STORAGE_KEY, sessions), [sessions]);
+  useEffect(() => saveStored(PROFILE_KEY, profile), [profile]);
   useEffect(() => localStorage.setItem(MODEL_KEY, model), [model]);
   useEffect(() => localStorage.setItem(THEME_KEY, theme), [theme]);
 
@@ -376,7 +383,9 @@ export function App() {
           pseudoFiles: mode === 'coding' ? [{ id: crypto.randomUUID(), name: 'pluto-output.js', content: response }] : session.pseudoFiles,
           terminalOutput: mode === 'coding' ? '$ node pluto-output.js\nArtifact kode siap direview.' : session.terminalOutput,
           imageResults: mode === 'image' ? [{ id: crypto.randomUUID(), prompt, style: imageStyle, createdAt: Date.now() }, ...session.imageResults] : session.imageResults,
+          ...buildSmartCodePatch({ session, response, prompt, mode }),
         }));
+        if (buildSmartProjectFromResponse(response, prompt)) setCanvasOpen(true);
         return;
       }
       let response;
@@ -414,7 +423,9 @@ export function App() {
             mode === 'image'
               ? [{ id: crypto.randomUUID(), prompt, style: imageStyle, createdAt: Date.now() }, ...session.imageResults]
               : session.imageResults,
+          ...buildSmartCodePatch({ session, response, prompt, mode }),
         }));
+        if (buildSmartProjectFromResponse(response, prompt)) setCanvasOpen(true);
       }
     } catch (error) {
       updateSession(activeSession.id, (session) => ({
@@ -442,6 +453,7 @@ export function App() {
     const result = authMode === 'login' ? await authApi.login(payload) : await authApi.signup(payload);
     saveAuth(result);
     localStorage.setItem(WELCOME_AUTH_KEY, 'seen');
+    setProfile((current) => ({ ...current, displayName: current.displayName || result.user?.name || payload.name || '', onboardingDone: true }));
     setAuthState(result);
     setAuthOpen(false);
   };
@@ -450,18 +462,23 @@ export function App() {
     const result = await authApi.googleLogin(credential);
     saveAuth(result);
     localStorage.setItem(WELCOME_AUTH_KEY, 'seen');
+    setProfile((current) => ({ ...current, displayName: current.displayName || result.user?.name || '', onboardingDone: true }));
     setAuthState(result);
     setAuthOpen(false);
   };
 
   const continueGuest = () => {
     localStorage.setItem(WELCOME_AUTH_KEY, 'seen');
+    setProfile((current) => ({ ...current, onboardingDone: true }));
+    setOnboardingOpen(false);
     setAuthOpen(false);
   };
 
   const logout = () => {
     clearAuth();
     setAuthState({ token: null, user: null });
+    setProfile((current) => ({ ...current, displayName: '', role: '', onboardingDone: true }));
+    setUsage(null);
   };
 
   const streamAssistantMessage = async (sessionId, messageId, fullText) => {
@@ -583,16 +600,17 @@ export function App() {
   if (!activeSession) return null;
   const isCanvasMode = activeSession.mode === 'workspace';
   const effectiveWorkspaceOpen = !isCanvasMode && (workspaceOpen || (!isMobile && activeSession.mode === 'image'));
+  const effectiveSidebarCollapsed = sidebarCollapsed || isCanvasMode;
 
   return (
-    <main className={`app-shell theme-${theme.toLowerCase()} layout-${activeSession.mode} ${effectiveWorkspaceOpen ? 'workspace-open' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <main className={`app-shell theme-${theme.toLowerCase()} layout-${activeSession.mode} ${effectiveWorkspaceOpen ? 'workspace-open' : ''} ${effectiveSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <SpaceBackdrop />
       <Sidebar
         sessions={sessions}
         activeId={activeSession.id}
         activeMode={activeSession.mode}
         drawerOpen={drawerOpen}
-        collapsed={sidebarCollapsed}
+        collapsed={effectiveSidebarCollapsed}
         query={historyQuery}
         onClose={() => setDrawerOpen(false)}
         onCollapse={() => setSidebarCollapsed((value) => !value)}
@@ -606,21 +624,36 @@ export function App() {
         onRename={renameSession}
         onDelete={deleteSession}
         authState={authState}
+        profile={profile}
+        usage={usage}
         onAuth={() => setAuthOpen(true)}
+        onAccount={() => setAccountOpen((value) => !value)}
         onLogout={logout}
+      />
+      <AccountCard
+        open={accountOpen}
+        authState={authState}
+        profile={profile}
+        usage={usage}
+        onClose={() => setAccountOpen(false)}
+        onAuth={() => { setAuthOpen(true); setAccountOpen(false); }}
+        onPlan={() => { setPlanOpen(true); setAccountOpen(false); }}
+        onLogout={() => { logout(); setAccountOpen(false); }}
       />
 
       <section className="main-panel">
-        <ChatHeader
-          mode={activeSession.mode}
-          model={model}
-          theme={theme}
-          onMenu={() => setDrawerOpen(true)}
-          onModel={setModel}
-          onSettings={() => setSettingsOpen(true)}
-          onTheme={() => setTheme(theme === 'Dark' ? 'Light' : 'Dark')}
-          onCommand={() => setCommandOpen(true)}
-        />
+        {!isCanvasMode && (
+          <ChatHeader
+            mode={activeSession.mode}
+            model={model}
+            theme={theme}
+            onMenu={() => setDrawerOpen(true)}
+            onModel={setModel}
+            onSettings={() => setSettingsOpen(true)}
+            onTheme={() => setTheme(theme === 'Dark' ? 'Light' : 'Dark')}
+            onCommand={() => setCommandOpen(true)}
+          />
+        )}
 
         {isCanvasMode ? (
           <CanvasStage
@@ -642,6 +675,7 @@ export function App() {
             session={activeSession}
             isTyping={isTyping}
             onPrompt={sendMessage}
+            profile={profile}
             onCopy={(text) => navigator.clipboard.writeText(text)}
             onDelete={deleteMessage}
             onEdit={editMessage}
@@ -687,6 +721,25 @@ export function App() {
         onUpgrade={async () => { const data = await authApi.upgrade(authState.token); setUsage(data); }}
         onDeleteMemory={async (id) => { await authApi.deleteMemory(id, authState.token); refreshAccountData(); }}
       />
+      <OnboardingModal
+        open={onboardingOpen}
+        profile={profile}
+        onComplete={(nextProfile, wantsLogin) => {
+          setProfile({ ...nextProfile, onboardingDone: true });
+          setOnboardingOpen(false);
+          localStorage.setItem(WELCOME_AUTH_KEY, 'seen');
+          if (wantsLogin) setAuthOpen(true);
+        }}
+        onSkip={continueGuest}
+      />
+      <UsagePlanModal
+        open={planOpen}
+        usage={usage}
+        authState={authState}
+        onClose={() => setPlanOpen(false)}
+        onAuth={() => { setAuthOpen(true); setPlanOpen(false); }}
+        onUpgrade={async () => { const data = await authApi.upgrade(authState.token); setUsage(data); }}
+      />
       <CommandPalette
         open={commandOpen}
         sessions={sessions}
@@ -715,9 +768,11 @@ function SpaceBackdrop() {
 }
 
 function Sidebar(props) {
-  const { sessions, activeId, activeMode, drawerOpen, collapsed, query, authState, onClose, onCollapse, onQuery, onNew, onSelect, onMode, onRename, onDelete, onAuth, onLogout } = props;
+  const { sessions, activeId, activeMode, drawerOpen, collapsed, query, authState, profile, usage, onClose, onCollapse, onQuery, onNew, onSelect, onMode, onRename, onDelete, onAuth, onAccount } = props;
   const filteredSessions = sessions.filter((session) => session.title.toLowerCase().includes(query.toLowerCase()));
   const grouped = groupSessions(filteredSessions);
+  const displayName = profile.displayName || authState.user?.name || 'Guest';
+  const initials = displayName.slice(0, 1).toUpperCase();
   return (
     <aside className={`sidebar glass ${drawerOpen ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}>
       <div className="mobile-close"><button onClick={onClose}><X size={18} /></button></div>
@@ -745,7 +800,14 @@ function Sidebar(props) {
         ))}
       </div>
       <div className="local-status auth-status">
-        {authState.user ? <button onClick={onLogout}>Keluar</button> : <button onClick={onAuth}>Login</button>}
+        {authState.user || profile.displayName ? (
+          <button className="account-trigger" onClick={onAccount} title="Account & Plan">
+            <b>{initials}</b>
+            <span>{collapsed ? '' : displayName}</span>
+            <small>{collapsed ? '' : `${usage?.plan || 'free'} plan`}</small>
+            {!collapsed && <ChevronRight size={15} />}
+          </button>
+        ) : <button onClick={onAuth}>Login</button>}
       </div>
     </aside>
   );
@@ -759,6 +821,95 @@ function groupSessions(sessions) {
     groups[key] = [...(groups[key] || []), session];
     return groups;
   }, {});
+}
+
+function AccountCard({ open, authState, profile, usage, onClose, onAuth, onPlan, onLogout }) {
+  if (!open) return null;
+  const displayName = profile.displayName || authState.user?.name || 'Guest';
+  const role = profile.role || 'Belum pilih peran';
+  return (
+    <aside className="account-card glass">
+      <button className="account-close" onClick={onClose}><X size={15} /></button>
+      <div className="account-head"><b>{displayName.slice(0, 1).toUpperCase()}</b><div><strong>{displayName}</strong><span>{role}</span></div></div>
+      <div className="account-plan"><span>{usage?.plan || (authState.user ? 'free' : 'guest')} plan</span>{usage ? <small>{usage.usage.messagesToday} / {usage.limits.messagesPerDay} pesan hari ini</small> : <small>Login untuk sync usage dan workspace.</small>}</div>
+      {usage && <QuotaBar label="Pesan" value={usage.usage.messagesToday} limit={usage.limits.messagesPerDay} compact />}
+      <div className="account-actions">
+        <button onClick={onPlan}>Usage & Plan</button>
+        {authState.user ? <button onClick={onLogout}>Logout</button> : <button onClick={onAuth}>Login / Daftar</button>}
+      </div>
+    </aside>
+  );
+}
+
+function OnboardingModal({ open, profile, onComplete, onSkip }) {
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState(profile);
+  if (!open) return null;
+  const goals = ['Chat AI', 'Buat dokumen', 'Coding', 'Gambar AI', 'Upload file'];
+  const sources = ['TikTok', 'Instagram', 'Teman', 'Google', 'GitHub', 'Kampus'];
+  const roles = ['Mahasiswa', 'Developer', 'Content Creator', 'Agency', 'Founder', 'Freelancer'];
+  return (
+    <div className="modal-backdrop onboarding-backdrop">
+      <section className="onboarding-card glass">
+        <button className="modal-close" onClick={onSkip}><X /></button>
+        {step === 0 && <OnboardingStep eyebrow="Selamat datang" title="Halo, aku Pluto" text="AI workspace untuk chat, dokumen, proposal, coding, file, dan ide kreatif. Mau mulai dari mana hari ini?" options={goals} value={form.goal} onPick={(goal) => setForm({ ...form, goal })} />}
+        {step === 1 && <OnboardingStep eyebrow="Personalisasi" title="Kamu tahu Pluto dari mana?" text="Ini bantu kami memahami channel yang paling berguna tanpa mengganggu pengalamanmu." options={sources} value={form.source} onPick={(source) => setForm({ ...form, source })} />}
+        {step === 2 && (
+          <div className="onboarding-step">
+            <span>Identitas</span><h2>Mau Pluto manggil kamu siapa?</h2><p>Nama dan peran dipakai untuk sapaan, rekomendasi template, dan gaya bantuan AI.</p>
+            <input value={form.displayName || ''} onChange={(event) => setForm({ ...form, displayName: event.target.value })} placeholder="Nama panggilan" />
+            <div className="onboarding-options">{roles.map((role) => <button key={role} className={form.role === role ? 'active' : ''} onClick={() => setForm({ ...form, role })}>{role}</button>)}</div>
+          </div>
+        )}
+        {step === 3 && (
+          <div className="onboarding-step">
+            <span>Simpan progres</span><h2>Workspace kamu siap</h2><p>Login kalau mau chat, dokumen, project, dan preferensi tersimpan lintas perangkat. Bisa lanjut sebagai tamu dulu.</p>
+            <div className="onboarding-summary"><b>{form.displayName || 'Guest'}</b><small>{form.role || 'Role belum dipilih'} · {form.goal || 'Goal belum dipilih'} · {form.source || 'Source belum dipilih'}</small></div>
+          </div>
+        )}
+        <div className="wizard-dots">{[0, 1, 2, 3].map((item) => <i key={item} className={item === step ? 'active' : ''} />)}</div>
+        <div className="wizard-actions">
+          <button onClick={step ? () => setStep(step - 1) : onSkip}>{step ? 'Kembali' : 'Lewati'}</button>
+          {step < 3 ? <button onClick={() => setStep(step + 1)}>Lanjut</button> : <><button onClick={() => onComplete(form, false)}>Lanjut sebagai tamu</button><button onClick={() => onComplete(form, true)}>Login / Daftar</button></>}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function OnboardingStep({ eyebrow, title, text, options, value, onPick }) {
+  return <div className="onboarding-step"><span>{eyebrow}</span><h2>{title}</h2><p>{text}</p><div className="onboarding-options">{options.map((option) => <button key={option} className={value === option ? 'active' : ''} onClick={() => onPick(option)}>{option}</button>)}</div></div>;
+}
+
+function UsagePlanModal({ open, usage, authState, onClose, onAuth, onUpgrade }) {
+  if (!open) return null;
+  const freeLimits = { messagesPerDay: 30, filesPerDay: 5, tokensPerMonth: 3000000, canvases: 5, projectCanvases: 2, memories: 20 };
+  const proLimits = { messagesPerDay: 1000, filesPerDay: 100, tokensPerMonth: 5000000, canvases: 100, projectCanvases: 30, memories: 500 };
+  const current = usage || { plan: authState.user ? 'free' : 'guest', usage: {}, limits: freeLimits };
+  return (
+    <div className="modal-backdrop plan-backdrop">
+      <section className="plan-modal glass">
+        <button className="modal-close" onClick={onClose}><X /></button>
+        <div className="plan-hero"><span>Account & Plan</span><h2>Usage dan limit Pluto</h2><p>Limit mengikuti plan yang sudah ada di server. Free untuk mulai cepat, Pro untuk workload serius.</p></div>
+        <div className="plan-usage">
+          <QuotaBar label="Pesan hari ini" value={current.usage.messagesToday || 0} limit={current.limits.messagesPerDay} />
+          <QuotaBar label="File hari ini" value={current.usage.filesToday || 0} limit={current.limits.filesPerDay} />
+          <QuotaBar label="Token bulan ini" value={current.usage.tokensMonth || 0} limit={current.limits.tokensPerMonth} compact />
+          <QuotaBar label="Canvas" value={current.usage.canvases || 0} limit={current.limits.canvases} />
+          <QuotaBar label="Project canvas" value={current.usage.projectCanvases || 0} limit={current.limits.projectCanvases} />
+          <QuotaBar label="Memory" value={current.usage.memories || 0} limit={current.limits.memories} />
+        </div>
+        <div className="pricing-grid">
+          <PlanCard title="Free" price="Rp0" active={current.plan === 'free'} limits={freeLimits} action={authState.user ? 'Plan aktif' : 'Login untuk sync'} onAction={authState.user ? null : onAuth} />
+          <PlanCard title="Pro" price="Upgrade" active={current.plan === 'pro'} limits={proLimits} action={current.plan === 'pro' ? 'Plan aktif' : 'Upgrade ke Pro'} onAction={authState.user ? onUpgrade : onAuth} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PlanCard({ title, price, active, limits, action, onAction }) {
+  return <article className={`plan-card ${active ? 'active' : ''}`}><span>{title}</span><h3>{price}</h3><ul><li>{limits.messagesPerDay} pesan/hari</li><li>{limits.filesPerDay} file/hari</li><li>{limits.canvases} canvas</li><li>{limits.projectCanvases} project canvas</li><li>{limits.memories} memory</li></ul><button disabled={!onAction || active} onClick={onAction}>{action}</button></article>;
 }
 
 function ChatHeader({ mode, model, theme, onMenu, onModel, onSettings, onTheme, onCommand }) {
@@ -826,24 +977,31 @@ function CustomSelect({ value, options, onChange, className = '', labels = {} })
   );
 }
 
-function ChatWindow({ session, isTyping, onPrompt, onCopy, onDelete, onEdit, onRegenerate }) {
+function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate }) {
   const endRef = useRef(null);
+  const lastAssistantId = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())?.id;
+  const hasPendingAssistant = session.messages.some((message) => message.role === 'assistant' && !message.content.trim());
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [session.messages, isTyping]);
   return (
     <div className="chat-window">
-      {!session.messages.length ? <WelcomeScreen mode={session.mode} onPrompt={onPrompt} /> : session.messages.map((message) => (
-        <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} />
-      ))}
-      {isTyping && <div className="typing"><span /><span /><span /> Pluto sedang merangkai orbit jawaban...</div>}
-      {!!session.messages.length && !isTyping && <button className="regenerate" onClick={onRegenerate}><RefreshCw size={15} /> Regenerate response</button>}
-      <div ref={endRef} />
+      {!session.messages.length ? <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} /> : (
+        <div className="chat-thread">
+          {session.messages.map((message) => (
+            <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} onRegenerate={onRegenerate} canRegenerate={!isTyping && message.id === lastAssistantId} />
+          ))}
+          {isTyping && !hasPendingAssistant && <div className="typing"><span /><span /><span /> Pluto sedang merangkai orbit jawaban...</div>}
+          <div ref={endRef} />
+        </div>
+      )}
     </div>
   );
 }
 
-function WelcomeScreen({ mode, onPrompt }) {
+function WelcomeScreen({ mode, profile, onPrompt }) {
+  const name = profile?.displayName?.trim();
+  const role = profile?.role ? ` untuk ${profile.role}` : '';
   const copy = {
-    chat: ['Apa yang ingin kamu eksplorasi?', 'Percakapan tenang untuk ide, riset, dan keputusan cepat.', ['Buat ringkasan strategi produk', 'Tulis email profesional', 'Susun rencana belajar', 'Cari ide konten premium']],
+    chat: [name ? `Halo, ${name}` : 'Apa yang ingin kamu eksplorasi?', `Percakapan tenang${role} untuk ide, riset, dan keputusan cepat.`, ['Buat proposal profesional', 'Tulis email profesional', 'Susun rencana belajar', 'Cari ide konten premium']],
     coding: ['Bangun kode lebih cepat', 'Tulis, debug, refactor, dan simpan artifact kode di workspace.', ['Buat komponen React', 'Debug kode JavaScript saya', 'Refactor fungsi ini', 'Buat struktur API backend']],
     image: ['Ciptakan gambar dari imajinasi', 'Studio visual untuk prompt, style, rasio, dan galeri hasil.', ['Planet Pluto luxury cinematic', 'Logo SaaS luar angkasa', 'Poster nebula violet', 'Karakter astronot elegan']],
     file: ['Bawa file sebagai konteks', 'Upload file lokal lalu pakai sebagai konteks percakapan.', ['Ringkas dokumen ini', 'Cari poin penting', 'Buat action items', 'Bandingkan isi file']],
@@ -858,20 +1016,28 @@ function WelcomeScreen({ mode, onPrompt }) {
   );
 }
 
-function MessageBubble({ message, onCopy, onDelete, onEdit }) {
+function MessageBubble({ message, onCopy, onDelete, onEdit, onRegenerate, canRegenerate }) {
   const chunks = parseCodeBlocks(message.content);
+  const isPending = message.role === 'assistant' && !message.content.trim();
   return (
     <article className={`message ${message.role}`} tabIndex={0}>
       <div className="bubble glass">
-        {message.role === 'user' && <button className="inline-edit" onClick={() => onEdit(message.id)}><PenLine size={13} /></button>}
-        {chunks.map((chunk, index) => chunk.type === 'code' ? <CodeBlock key={index} code={chunk.value} language={chunk.language} onCopy={onCopy} /> : <MarkdownText key={index} text={chunk.value} />)}
+        {isPending ? <TypingDots /> : chunks.map((chunk, index) => chunk.type === 'code' ? <CodeBlock key={index} code={chunk.value} language={chunk.language} onCopy={onCopy} /> : <MarkdownText key={index} text={chunk.value} />)}
+      </div>
+      {!!message.content.trim() && (
         <div className="message-actions">
+          {message.role === 'user' && <button onClick={() => onEdit(message.id)}><PenLine size={14} /> Edit</button>}
+          {canRegenerate && <button onClick={onRegenerate}><RefreshCw size={14} /> Regenerate</button>}
           <button onClick={() => onCopy(message.content)}><Copy size={14} /> Copy</button>
           <button onClick={() => onDelete(message.id)}><Trash2 size={14} /> Hapus</button>
         </div>
-      </div>
+      )}
     </article>
   );
+}
+
+function TypingDots() {
+  return <div className="typing-dots"><span /><span /><span /></div>;
 }
 
 function MarkdownText({ text }) {
@@ -938,9 +1104,19 @@ function Composer({ value, mode, imageStyle, disabled, isTyping, onChange, onSen
 function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave, onOpen, onComposer, onSend, onStop, onAttach, onVoice }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingProjectPatch, setPendingProjectPatch] = useState(null);
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
   const canvases = session.canvases?.length ? session.canvases : [createCanvas('Document')];
   const activeCanvas = canvases.find((canvas) => canvas.id === session.activeCanvasId) || canvases[0];
   const lastAssistant = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim());
+
+  useEffect(() => {
+    if (activeCanvas?.type === 'Project') setPreviewOpen(true);
+  }, [activeCanvas?.id, activeCanvas?.type]);
+
+  useEffect(() => {
+    if (isTyping || lastAssistant) setAiDrawerOpen(true);
+  }, [isTyping, lastAssistant?.id]);
 
   const saveCanvases = (nextCanvases, activeCanvasId = activeCanvas.id) => {
     onUpdate({ canvases: nextCanvases, activeCanvasId });
@@ -978,6 +1154,20 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
     const content = activeCanvas.type === 'Code' ? activeCanvas.content || '' : buildDocDownload(activeCanvas);
     const blob = new Blob([content], { type: activeCanvas.type === 'Code' ? 'text/plain;charset=utf-8' : 'application/msword;charset=utf-8' });
     triggerDownload(blob, `${safeTitle}.${extension}`);
+  };
+
+  const printCanvasPdf = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(buildDocDownload(activeCanvas));
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const handleDownloadOption = (action) => {
+    if (action === 'pdf') return printCanvasPdf();
+    return downloadCanvas();
   };
 
   const addCanvas = (type = 'Document', templateId = 'landing') => {
@@ -1033,13 +1223,17 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
   const applyToSelection = () => {
     if (!lastAssistant || !activeCanvas.selection) return;
     const content = extractCanvasPayload(lastAssistant.content, activeCanvas.type);
-    const snapshot = { content: activeCanvas.content || '', title: activeCanvas.title, type: activeCanvas.type, language: activeCanvas.language, createdAt: Date.now() };
-    const { start, end } = activeCanvas.selection;
-    updateCanvas({
-      content: `${activeCanvas.content.slice(0, start)}${content}${activeCanvas.content.slice(end)}`,
-      versions: [snapshot, ...(activeCanvas.versions || [])].slice(0, 10),
-      selection: null,
-    });
+    const snapshot = { content: activeCanvas.content || '', title: activeCanvas.title, type: activeCanvas.type, language: activeCanvas.language, files: activeCanvas.files, activeFileId: activeCanvas.activeFileId, createdAt: Date.now() };
+    const { start, end, fileId } = activeCanvas.selection;
+    if (activeCanvas.type === 'Project' && fileId) {
+      updateCanvas({
+        files: activeCanvas.files.map((file) => file.id === fileId ? { ...file, content: `${file.content.slice(0, start)}${content}${file.content.slice(end)}` } : file),
+        versions: [snapshot, ...(activeCanvas.versions || [])].slice(0, 10),
+        selection: null,
+      });
+      return;
+    }
+    updateCanvas({ content: `${activeCanvas.content.slice(0, start)}${content}${activeCanvas.content.slice(end)}`, versions: [snapshot, ...(activeCanvas.versions || [])].slice(0, 10), selection: null });
   };
 
   const createCanvasFromAssistant = () => {
@@ -1080,13 +1274,13 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
   }
 
   return (
-    <section className="canvas-stage">
+    <section className={`canvas-stage ${aiDrawerOpen ? 'ai-open' : ''}`}>
       <div className="canvas-stage-toolbar glass">
         <div className="canvas-title-stack">
-          <button className="canvas-back" onClick={() => onOpen(false)}>Back to workspace</button>
+          <button className="canvas-back" onClick={() => onOpen(false)}>Back</button>
           <div>
-            <span>AI Canvas</span>
-            <strong>{activeCanvas.title}</strong>
+            <input value={activeCanvas.title} onChange={(event) => updateCanvas({ title: event.target.value || 'Untitled Canvas' })} placeholder="Untitled Canvas" />
+            <span className={activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt ? 'saved' : 'unsaved'}>{activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt ? `Synced ${new Date(activeCanvas.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Unsaved changes'}</span>
           </div>
         </div>
         <div className="canvas-stage-actions">
@@ -1094,43 +1288,56 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
           {activeCanvas.type === 'Code' && <CustomSelect value={activeCanvas.language || 'javascript'} options={canvasLanguages} onChange={(language) => updateCanvas({ language })} />}
           <button onClick={() => setPreviewOpen((value) => !value)}><FileText size={15} /> {previewOpen ? 'Edit' : 'Preview'}</button>
           <button onClick={saveCanvas}><Check size={15} /> Save</button>
-          <button onClick={downloadCanvas}><Download size={15} /> Download</button>
-          <button onClick={addCanvas}><Plus size={15} /> New</button>
-          <button onClick={deleteCanvas}><Trash2 size={15} /></button>
+          <CustomSelect value="Download" className="download-select" options={[{ name: 'doc', label: 'Download DOC', detail: 'Buka di Word/Docs' }, { name: 'pdf', label: 'Save as PDF', detail: 'Lewat print dialog' }]} onChange={handleDownloadOption} />
+          <button onClick={() => setDiffOpen(true)} disabled={!activeCanvas.versions?.length}><Code2 size={15} /> Diff</button>
+          <button onClick={() => setAiDrawerOpen((value) => !value)}><Sparkles size={15} /> Ask AI</button>
+          <button className="canvas-more" onClick={addCanvas}><Plus size={15} /></button>
+          <button className="canvas-more" onClick={deleteCanvas}><Trash2 size={15} /></button>
         </div>
       </div>
-      <div className="canvas-sheet glass">
-        <div className="canvas-sheet-head">
-          <input value={activeCanvas.title} onChange={(event) => updateCanvas({ title: event.target.value || 'Untitled Canvas' })} placeholder="Nama canvas" />
-          <span className={activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt ? 'saved' : 'unsaved'}>{activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt ? `Synced ${new Date(activeCanvas.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Unsaved changes'}</span>
+      <div className="canvas-work-area">
+        <div className={`canvas-sheet glass ${activeCanvas.type === 'Project' ? 'project-sheet' : ''}`}>
+          {activeCanvas.type === 'Project' ? (
+            <ProjectEditor canvas={activeCanvas} previewOpen={previewOpen} onUpdate={updateCanvas} />
+          ) : previewOpen ? (
+            <CanvasPreview canvas={activeCanvas} />
+          ) : (
+            <textarea
+              className={`canvas-stage-editor canvas-${activeCanvas.type.toLowerCase()}`}
+              value={activeCanvas.content}
+              onChange={(event) => updateCanvas({ content: event.target.value })}
+              onSelect={captureSelection}
+              placeholder={activeCanvas.type === 'Code' ? 'Tulis atau paste kode di sini...' : activeCanvas.type === 'Plan' ? 'Tulis rencana, task, atau checklist...' : 'Mulai tulis dokumen, ide, proposal, atau draft di canvas ini...'}
+            />
+          )}
         </div>
-        {activeCanvas.type === 'Project' ? (
-          <ProjectEditor canvas={activeCanvas} previewOpen={previewOpen} onUpdate={updateCanvas} />
-        ) : previewOpen ? (
-          <CanvasPreview canvas={activeCanvas} />
-        ) : (
-          <textarea
-            className={`canvas-stage-editor canvas-${activeCanvas.type.toLowerCase()}`}
-            value={activeCanvas.content}
-            onChange={(event) => updateCanvas({ content: event.target.value })}
-            onSelect={captureSelection}
-            placeholder={activeCanvas.type === 'Code' ? 'Tulis atau paste kode di sini...' : activeCanvas.type === 'Plan' ? 'Tulis rencana, task, atau checklist...' : 'Mulai tulis dokumen, ide, proposal, atau draft di canvas ini...'}
-          />
-        )}
-        <CanvasHistory versions={activeCanvas.versions || []} onRestore={restoreVersion} />
+        <CanvasAIDock
+          open={aiDrawerOpen}
+          assistant={lastAssistant}
+          composer={composer}
+          canvas={activeCanvas}
+          isTyping={isTyping}
+          hasSelection={Boolean(activeCanvas.selection)}
+          canUndo={Boolean(activeCanvas.versions?.length)}
+          isProject={activeCanvas.type === 'Project'}
+          selection={activeCanvas.selection}
+          versions={activeCanvas.versions || []}
+          onClose={() => setAiDrawerOpen(false)}
+          onUndo={undoCanvas}
+          onReplace={() => applyAssistant('replace')}
+          onAppend={() => applyAssistant('append')}
+          onSelection={applyToSelection}
+          onNewCanvas={createCanvasFromAssistant}
+          onRestore={restoreVersion}
+          onChange={onComposer}
+          onSend={onSend}
+          onStop={onStop}
+          onAttach={onAttach}
+          onVoice={onVoice}
+        />
       </div>
-      <FloatingCanvasComposer
-        value={composer}
-        canvas={activeCanvas}
-        isTyping={isTyping}
-        onChange={onComposer}
-        onSend={onSend}
-        onStop={onStop}
-        onAttach={onAttach}
-        onVoice={onVoice}
-      />
-      <CanvasAIDock assistant={lastAssistant} isTyping={isTyping} hasSelection={Boolean(activeCanvas.selection)} canUndo={Boolean(activeCanvas.versions?.length)} isProject={activeCanvas.type === 'Project'} onUndo={undoCanvas} onReplace={() => applyAssistant('replace')} onAppend={() => applyAssistant('append')} onSelection={applyToSelection} onNewCanvas={createCanvasFromAssistant} />
       {pendingProjectPatch && <ProjectDiffPreview currentFiles={activeCanvas.files || []} patch={pendingProjectPatch.files} mode={pendingProjectPatch.mode} onCancel={() => setPendingProjectPatch(null)} onApply={applyProjectPatch} />}
+      {diffOpen && <CanvasDiffModal canvas={activeCanvas} onClose={() => setDiffOpen(false)} onRestore={restoreVersion} />}
     </section>
   );
 }
@@ -1171,6 +1378,10 @@ function ProjectEditor({ canvas, previewOpen, onUpdate }) {
 
   const updateFiles = (nextFiles, activeFileId = activeFile.id) => onUpdate({ files: nextFiles, activeFileId });
   const updateFile = (content) => updateFiles(files.map((file) => file.id === activeFile.id ? { ...file, content } : file));
+  const captureFileSelection = (event) => {
+    const { selectionStart, selectionEnd } = event.target;
+    onUpdate({ selection: selectionEnd > selectionStart ? { start: selectionStart, end: selectionEnd, text: activeFile.content.slice(selectionStart, selectionEnd), fileId: activeFile.id, filePath: activeFile.path } : null });
+  };
   const addFile = () => {
     const next = { id: crypto.randomUUID(), path: 'new-file.js', language: 'javascript', content: '' };
     updateFiles([...files, next], next.id);
@@ -1185,10 +1396,8 @@ function ProjectEditor({ canvas, previewOpen, onUpdate }) {
     updateFiles(files.map((file) => file.id === activeFile.id ? { ...file, path, language } : file));
   };
 
-  if (previewOpen) return <iframe className="project-preview" title="Project preview" sandbox="allow-scripts" srcDoc={buildProjectPreview(files)} />;
-
   return (
-    <div className="project-editor">
+    <div className={`project-editor ${previewOpen ? 'with-preview' : ''}`}>
       <aside className="project-files">
         <div><span>Files</span><button onClick={addFile}><Plus size={13} /></button></div>
         {files.map((file) => <button key={file.id} className={file.id === activeFile.id ? 'active' : ''} onClick={() => onUpdate({ activeFileId: file.id })}>{file.path}</button>)}
@@ -1198,8 +1407,9 @@ function ProjectEditor({ canvas, previewOpen, onUpdate }) {
           <input value={activeFile.path} onChange={(event) => renameFile(event.target.value)} />
           <button onClick={deleteFile} disabled={files.length <= 1}><Trash2 size={14} /></button>
         </div>
-        <textarea value={activeFile.content} onChange={(event) => updateFile(event.target.value)} spellCheck={false} />
+        <textarea value={activeFile.content} onChange={(event) => updateFile(event.target.value)} onSelect={captureFileSelection} spellCheck={false} />
       </section>
+      {previewOpen && <iframe className="project-preview" title="Project preview" sandbox="allow-scripts" srcDoc={buildProjectPreview(files)} />}
     </div>
   );
 }
@@ -1211,6 +1421,76 @@ function buildProjectPreview(files) {
   return html
     .replace('</head>', `<style>${css}</style></head>`)
     .replace('</body>', `<script>${js}<\/script></body>`);
+}
+
+function buildSmartCodePatch({ session, response, prompt, mode }) {
+  const project = buildSmartProjectFromResponse(response, prompt);
+  if (project) {
+    const canvas = {
+      ...createCanvas('Project'),
+      title: project.title,
+      files: project.files,
+      activeFileId: project.files[0]?.id || null,
+      savedAt: null,
+      updatedAt: Date.now(),
+    };
+    return {
+      mode: 'workspace',
+      activeCanvasId: canvas.id,
+      canvases: [canvas, ...(session.canvases || [])],
+      codeOutput: response,
+      pseudoFiles: project.files.map((file) => ({ id: file.id, name: file.path, content: file.content })),
+      terminalOutput: '$ preview project\nProject AI siap direview di canvas preview.',
+    };
+  }
+  if (mode === 'coding' || looksLikeCode(response) || looksLikeCodeRequest(prompt)) {
+    return { mode: 'coding' };
+  }
+  return {};
+}
+
+function buildSmartProjectFromResponse(response, prompt = '') {
+  const text = String(response || '');
+  const patch = parseProjectPatch(text, []);
+  if (patch.some((file) => file.path.endsWith('.html'))) {
+    return {
+      title: makeProjectTitle(prompt),
+      files: patch.map((file) => ({ id: crypto.randomUUID(), path: file.path, language: file.language || getLanguageFromPath(file.path), content: file.content })),
+    };
+  }
+  const blocks = extractCodeBlocks(text);
+  const html = blocks.find((block) => block.language === 'html' || /<!doctype html|<html[\s>]|<body[\s>]|<main[\s>]/i.test(block.code))?.code;
+  if (!html && !/landing|website|web|html|css|tailwind|page|halaman/i.test(prompt)) return null;
+  const css = blocks.filter((block) => block.language === 'css').map((block) => block.code).join('\n\n');
+  const js = blocks.filter((block) => ['js', 'javascript'].includes(block.language)).map((block) => block.code).join('\n\n');
+  if (!html) return null;
+  return {
+    title: makeProjectTitle(prompt),
+    files: createProjectFiles({ title: makeProjectTitle(prompt), html, css, js }),
+  };
+}
+
+function extractCodeBlocks(text) {
+  const blocks = [];
+  const regex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
+  let match;
+  while ((match = regex.exec(String(text || '')))) {
+    blocks.push({ language: (match[1] || '').toLowerCase(), code: match[2].trim() });
+  }
+  return blocks;
+}
+
+function looksLikeCode(text) {
+  return /```|function\s+\w+|const\s+\w+\s*=|class\s+\w+|<!doctype html|<html[\s>]|import\s+.+from/i.test(String(text || ''));
+}
+
+function looksLikeCodeRequest(text) {
+  return /buat(in)?\s+(kode|code|website|landing|html|css|javascript|react|component|komponen)|coding|debug|script/i.test(String(text || ''));
+}
+
+function makeProjectTitle(prompt) {
+  const cleaned = String(prompt || '').replace(/buat(in)?|tolong|saya|aku|website|html|kode|code/gi, '').trim();
+  return cleaned ? cleaned.slice(0, 42).replace(/^\w/, (letter) => letter.toUpperCase()) : 'AI Website';
 }
 
 function parseProjectPatch(text, currentFiles = []) {
@@ -1292,10 +1572,85 @@ function buildLineDiff(previous, next) {
   };
 }
 
+function CanvasDiffModal({ canvas, onClose, onRestore }) {
+  const latest = canvas.versions?.[0];
+  if (!latest) return null;
+  const isProject = canvas.type === 'Project';
+  const files = isProject ? buildProjectCanvasDiff(latest.files || [], canvas.files || []) : [{ path: canvas.title, diff: buildLineDiff(latest.content || '', canvas.content || ''), status: 'Modified' }];
+  return (
+    <div className="diff-backdrop">
+      <section className="project-diff canvas-diff-modal glass">
+        <div className="diff-head">
+          <div><span>Git Diff</span><h2>Perubahan terakhir</h2><p>Lihat before/after dari versi terakhir sebelum perubahan AI atau edit manual.</p></div>
+          <button className="modal-close" onClick={onClose}><X size={17} /></button>
+        </div>
+        <div className="diff-list">
+          {files.map((file) => (
+            <article className="diff-file" key={file.path}>
+              <div className="diff-file-head"><strong>{file.path}</strong><span>{file.status}</span></div>
+              <div className="diff-columns">
+                <div className="diff-pane"><span>Before</span><pre>{file.diff.before.map((line, index) => <code key={`${file.path}-before-${index}`} className={line.changed ? 'diff-line removed' : 'diff-line'}>{line.text || ' '}</code>)}</pre></div>
+                <div className="diff-pane"><span>After</span><pre>{file.diff.after.map((line, index) => <code key={`${file.path}-after-${index}`} className={line.changed ? 'diff-line added' : 'diff-line'}>{line.text || ' '}</code>)}</pre></div>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="diff-actions"><button onClick={onClose}>Tutup</button><button onClick={() => { onRestore(latest); onClose(); }}>Restore versi sebelum</button></div>
+      </section>
+    </div>
+  );
+}
+
+function buildProjectCanvasDiff(beforeFiles, afterFiles) {
+  const paths = [...new Set([...beforeFiles, ...afterFiles].map((file) => normalizeProjectPath(file.path)))];
+  return paths.map((path) => {
+    const before = beforeFiles.find((file) => normalizeProjectPath(file.path) === path);
+    const after = afterFiles.find((file) => normalizeProjectPath(file.path) === path);
+    return { path, status: before && after ? 'Modified' : before ? 'Deleted' : 'Created', diff: buildLineDiff(before?.content || '', after?.content || '') };
+  });
+}
+
 function CanvasPreview({ canvas }) {
   if (!canvas.content?.trim()) return <div className="canvas-preview doc-preview empty">Canvas masih kosong.</div>;
   if (canvas.type === 'Code') return <pre className="canvas-preview canvas-code"><code>{canvas.content}</code></pre>;
-  return <div className="canvas-preview doc-preview"><article><h1>{canvas.title}</h1><MarkdownText text={canvas.content} /></article></div>;
+  return <div className="canvas-preview doc-preview"><article><h1>{canvas.title}</h1><DocumentMarkdown text={canvas.content} /></article></div>;
+}
+
+function DocumentMarkdown({ text }) {
+  const blocks = [];
+  const lines = String(text || '').split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    if (/^---+$/.test(line)) {
+      blocks.push(<hr key={index} />);
+    } else if (line.startsWith('### ')) {
+      blocks.push(<h3 key={index}><InlineMarkdown text={line.slice(4)} /></h3>);
+    } else if (line.startsWith('## ')) {
+      blocks.push(<h2 key={index}><InlineMarkdown text={line.slice(3)} /></h2>);
+    } else if (line.startsWith('# ')) {
+      blocks.push(<h1 key={index}><InlineMarkdown text={line.slice(2)} /></h1>);
+    } else if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^[-*]\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^[-*]\s+/, ''));
+        index += 1;
+      }
+      index -= 1;
+      blocks.push(<ul key={index}>{items.map((item, itemIndex) => <li key={itemIndex}><InlineMarkdown text={item} /></li>)}</ul>);
+    } else if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
+        items.push(lines[index].trim().replace(/^\d+\.\s+/, ''));
+        index += 1;
+      }
+      index -= 1;
+      blocks.push(<ol key={index}>{items.map((item, itemIndex) => <li key={itemIndex}><InlineMarkdown text={item} /></li>)}</ol>);
+    } else {
+      blocks.push(<p key={index}><InlineMarkdown text={line} /></p>);
+    }
+  }
+  return <div className="document-body">{blocks}</div>;
 }
 
 function CanvasHistory({ versions, onRestore }) {
@@ -1322,25 +1677,38 @@ function extractCanvasPayload(text, type) {
   return text.replace(/```(?:\w+)?\n([\s\S]*?)```/g, '$1').trim();
 }
 
-function CanvasAIDock({ assistant, isTyping, hasSelection, canUndo, isProject, onUndo, onReplace, onAppend, onSelection, onNewCanvas }) {
-  if (!assistant && !isTyping) return null;
+function CanvasAIDock({ open, assistant, composer, canvas, isTyping, hasSelection, canUndo, isProject, selection, versions, onClose, onUndo, onReplace, onAppend, onSelection, onNewCanvas, onRestore, onChange, onSend, onStop, onAttach, onVoice }) {
+  if (!open) return null;
   return (
     <aside className="canvas-ai-dock glass">
       <div className="dock-head">
-        <div><span>AI Output</span><strong>{isTyping ? 'Pluto sedang bekerja...' : 'Hasil terakhir'}</strong></div>
+        <div><span>AI Assistant</span><strong>{isTyping ? 'Sedang bekerja...' : 'Edit canvas dengan AI'}</strong></div>
+        <button onClick={onClose}><X size={15} /></button>
       </div>
-      <div className="dock-body">
-        {assistant ? <MarkdownText text={assistant.content.slice(0, 1400)} /> : <p>Menunggu jawaban Pluto...</p>}
+      <div className="dock-composer">
+        <span>Using {canvas?.title || 'canvas'}</span>
+        {selection?.text && <div className="selection-chip">Selection aktif{selection.filePath ? ` · ${selection.filePath}` : ''}: {selection.text.slice(0, 90)}</div>}
+        <div>
+          <button className="icon" onClick={onAttach}><Paperclip /></button>
+          <textarea value={composer} onChange={(event) => onChange(event.target.value)} placeholder="Minta AI menulis, merapikan, atau mengubah canvas ini..." onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend(); } }} />
+          <button className="icon" onClick={onVoice}><Mic /></button>
+          {isTyping ? <button className="send stop" onClick={onStop}><X size={18} /></button> : <button className="send" disabled={!composer.trim()} onClick={onSend}><Send size={18} /></button>}
+        </div>
+      </div>
+      <div className={`dock-body ${isTyping ? 'generating' : ''}`}>
+        {assistant ? <MarkdownText text={assistant.content} /> : <p>AI output akan muncul di sini setelah kamu mengirim instruksi.</p>}
+        {isTyping && <div className="ai-generating"><span /><span /><span /> AI sedang generate...</div>}
       </div>
       {assistant && (
         <div className="dock-actions">
-          <button onClick={onReplace}>{isProject ? 'Preview Apply' : 'Replace Canvas'}</button>
-          <button onClick={onAppend}>{isProject ? 'Preview Append' : 'Append'}</button>
+          <button onClick={onAppend}>{isProject ? 'Preview Append' : 'Insert'}</button>
+          <button onClick={onReplace}>{isProject ? 'Preview Apply' : 'Replace'}</button>
           <button onClick={onSelection} disabled={!hasSelection}>Apply Selection</button>
           <button onClick={onNewCanvas}>New Canvas</button>
           <button onClick={onUndo} disabled={!canUndo}>Undo</button>
         </div>
       )}
+      <CanvasHistory versions={versions} onRestore={onRestore} />
     </aside>
   );
 }
