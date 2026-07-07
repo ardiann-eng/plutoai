@@ -16,6 +16,7 @@ import {
   Menu,
   Mic,
   MoonStar,
+  MoreHorizontal,
   Paperclip,
   PenLine,
   Plus,
@@ -230,7 +231,7 @@ export function App() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [historyQuery, setHistoryQuery] = useState('');
   const [authState, setAuthState] = useState(() => getStoredAuth());
   const [profile, setProfile] = useState(() => loadStored(PROFILE_KEY, { displayName: '', role: '', source: '', goal: '', onboardingDone: false }));
@@ -599,7 +600,7 @@ export function App() {
 
   if (!activeSession) return null;
   const isCanvasMode = activeSession.mode === 'workspace';
-  const effectiveWorkspaceOpen = !isCanvasMode && (workspaceOpen || (!isMobile && activeSession.mode === 'image'));
+  const effectiveWorkspaceOpen = !isCanvasMode && (workspaceOpen || (!isMobile && ['image', 'coding'].includes(activeSession.mode)));
   const effectiveSidebarCollapsed = sidebarCollapsed || isCanvasMode;
 
   return (
@@ -687,6 +688,7 @@ export function App() {
           <Composer
             value={composer}
             mode={activeSession.mode}
+            model={model}
             imageStyle={imageStyle}
             disabled={isTyping}
             isTyping={isTyping}
@@ -694,6 +696,7 @@ export function App() {
             onSend={() => sendMessage()}
             onStop={stopGenerating}
             onMode={selectMode}
+            onModel={setModel}
             onAttach={() => fileInputRef.current?.click()}
             onVoice={startVoice}
             onImageStyle={setImageStyle}
@@ -701,7 +704,7 @@ export function App() {
         )}
       </section>
 
-      {effectiveWorkspaceOpen && <WorkspacePanel session={activeSession} onUpdate={(patch) => updateSession(activeSession.id, (s) => ({ ...s, ...patch }))} onClose={() => setWorkspaceOpen(false)} />}
+      {effectiveWorkspaceOpen && <WorkspacePanel session={activeSession} onUpdate={(patch) => updateSession(activeSession.id, (s) => ({ ...s, ...patch }))} onPrompt={sendMessage} onClose={() => setWorkspaceOpen(false)} />}
 
       <input ref={fileInputRef} className="hidden" type="file" multiple onChange={attachFiles} />
       <SettingsModal
@@ -845,8 +848,21 @@ function OnboardingModal({ open, profile, onComplete, onSkip }) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState(profile);
   if (!open) return null;
-  const goals = ['Chat AI', 'Buat dokumen', 'Coding', 'Gambar AI', 'Upload file'];
-  const sources = ['TikTok', 'Instagram', 'Teman', 'Google', 'GitHub', 'Kampus'];
+  const goals = [
+    { label: 'Chat AI', detail: 'Tanya, riset, dan brainstorming cepat', icon: Bot },
+    { label: 'Buat dokumen', detail: 'Draft laporan, proposal, dan brief', icon: FileText },
+    { label: 'Coding', detail: 'Tulis, debug, dan refactor kode', icon: Code2 },
+    { label: 'Gambar AI', detail: 'Prompt visual, style, dan ide konten', icon: Image },
+    { label: 'Upload file', detail: 'Analisis file sebagai konteks', icon: Upload },
+  ];
+  const sources = [
+    { label: 'TikTok', detail: 'Konten pendek atau review' },
+    { label: 'Instagram', detail: 'Post, story, atau reels' },
+    { label: 'Teman', detail: 'Rekomendasi langsung' },
+    { label: 'Google', detail: 'Search atau artikel' },
+    { label: 'GitHub', detail: 'Repo atau developer' },
+    { label: 'Kampus', detail: 'Dosen, kelas, atau teman' },
+  ];
   const roles = ['Mahasiswa', 'Developer', 'Content Creator', 'Agency', 'Founder', 'Freelancer'];
   return (
     <div className="modal-backdrop onboarding-backdrop">
@@ -868,17 +884,43 @@ function OnboardingModal({ open, profile, onComplete, onSkip }) {
           </div>
         )}
         <div className="wizard-dots">{[0, 1, 2, 3].map((item) => <i key={item} className={item === step ? 'active' : ''} />)}</div>
-        <div className="wizard-actions">
-          <button onClick={step ? () => setStep(step - 1) : onSkip}>{step ? 'Kembali' : 'Lewati'}</button>
-          {step < 3 ? <button onClick={() => setStep(step + 1)}>Lanjut</button> : <><button onClick={() => onComplete(form, false)}>Lanjut sebagai tamu</button><button onClick={() => onComplete(form, true)}>Login / Daftar</button></>}
-        </div>
+        {step < 3 ? (
+          <div className="wizard-actions">
+            <button onClick={step ? () => setStep(step - 1) : onSkip}>{step ? 'Kembali' : 'Lewati'}</button>
+            <button onClick={() => setStep(step + 1)}>Lanjut</button>
+          </div>
+        ) : (
+          <div className="onboarding-finish-actions">
+            <button className="finish-primary" onClick={() => onComplete(form, true)}><Sparkles size={17} /> Login / Daftar<span>Simpan chat, canvas, project, dan preferensi lintas perangkat.</span></button>
+            <button className="finish-secondary" onClick={() => onComplete(form, false)}>Lanjut sebagai tamu<span>Coba dulu di perangkat ini. Data lokal tetap bisa dipakai.</span></button>
+            <button className="finish-back" onClick={() => setStep(step - 1)}>Kembali</button>
+          </div>
+        )}
       </section>
     </div>
   );
 }
 
 function OnboardingStep({ eyebrow, title, text, options, value, onPick }) {
-  return <div className="onboarding-step"><span>{eyebrow}</span><h2>{title}</h2><p>{text}</p><div className="onboarding-options">{options.map((option) => <button key={option} className={value === option ? 'active' : ''} onClick={() => onPick(option)}>{option}</button>)}</div></div>;
+  return (
+    <div className="onboarding-step">
+      <span>{eyebrow}</span>
+      <h2>{title}</h2>
+      <p>{text}</p>
+      <div className="onboarding-options">
+        {options.map((option) => {
+          const item = typeof option === 'string' ? { label: option } : option;
+          const Icon = item.icon;
+          return (
+            <button key={item.label} className={value === item.label ? 'active' : ''} onClick={() => onPick(item.label)}>
+              {Icon && <i><Icon size={17} /></i>}
+              <span><strong>{item.label}</strong>{item.detail && <small>{item.detail}</small>}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function UsagePlanModal({ open, usage, authState, onClose, onAuth, onUpgrade }) {
@@ -927,8 +969,8 @@ function ChatHeader({ mode, model, theme, onMenu, onModel, onSettings, onTheme, 
   );
 }
 
-function ModelSelector({ value, onChange }) {
-  return <CustomSelect value={value} options={MODEL_OPTIONS} onChange={onChange} className="model-select" />;
+function ModelSelector({ value, onChange, className = '' }) {
+  return <CustomSelect value={value} options={MODEL_OPTIONS} onChange={onChange} className={`model-select ${className}`} />;
 }
 
 function CustomSelect({ value, options, onChange, className = '', labels = {} }) {
@@ -977,6 +1019,47 @@ function CustomSelect({ value, options, onChange, className = '', labels = {} })
   );
 }
 
+function ActionMenu({ actions }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const close = (event) => {
+      if (!ref.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, []);
+
+  return (
+    <div className="action-menu" ref={ref}>
+      <button className="more-trigger" type="button" onClick={() => setOpen((value) => !value)}><MoreHorizontal size={18} /> More</button>
+      {open && (
+        <div className="action-menu-panel glass">
+          {actions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.label}
+                type="button"
+                className={action.danger ? 'danger-action' : ''}
+                disabled={action.disabled}
+                onClick={() => {
+                  action.onClick();
+                  setOpen(false);
+                }}
+              >
+                <Icon size={15} />
+                <span><strong>{action.label}</strong>{action.detail && <small>{action.detail}</small>}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate }) {
   const endRef = useRef(null);
   const lastAssistantId = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())?.id;
@@ -984,7 +1067,7 @@ function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, on
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [session.messages, isTyping]);
   return (
     <div className="chat-window">
-      {!session.messages.length ? <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} /> : (
+      {!session.messages.length ? (session.mode === 'coding' ? <CodingStartScreen onPrompt={onPrompt} /> : <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} />) : (
         <div className="chat-thread">
           {session.messages.map((message) => (
             <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} onRegenerate={onRegenerate} canRegenerate={!isTyping && message.id === lastAssistantId} />
@@ -994,6 +1077,30 @@ function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, on
         </div>
       )}
     </div>
+  );
+}
+
+function CodingStartScreen({ onPrompt }) {
+  const actions = [
+    ['Debug error', 'Tempel stack trace, cari root cause, beri patch kecil.', 'Debug error ini dan berikan patch minimal.'],
+    ['Refactor', 'Rapikan fungsi tanpa mengubah behavior.', 'Refactor kode ini agar lebih bersih tanpa over-engineering.'],
+    ['Review diff', 'Cari bug, regresi, edge case, dan missing tests.', 'Review perubahan ini dengan fokus bug dan risiko.'],
+    ['Write tests', 'Buat test cases untuk fungsi atau komponen.', 'Buat test untuk kode ini, sertakan edge case penting.'],
+    ['Generate component', 'Buat komponen React siap pakai.', 'Buat komponen React modern berdasarkan brief ini.'],
+    ['Explain code', 'Jelaskan alur kode dan bagian berisiko.', 'Jelaskan kode ini dengan ringkas dan tunjukkan risiko.'],
+  ];
+  return (
+    <section className="coding-start">
+      <div className="coding-hero glass">
+        <span>Pluto Code</span>
+        <h1>Build, debug, refactor.</h1>
+        <p>Mode coding fokus ke snippet, stack trace, patch, review, dan artifact. Workspace tetap untuk canvas/project, sementara Coding jadi cockpit teknis cepat.</p>
+        <div className="coding-command-line"><Code2 size={16} /><code>paste error | ask patch | review diff | write tests</code></div>
+      </div>
+      <div className="coding-action-grid">
+        {actions.map(([title, detail, prompt]) => <button key={title} onClick={() => onPrompt(prompt)}><strong>{title}</strong><span>{detail}</span></button>)}
+      </div>
+    </section>
   );
 }
 
@@ -1075,7 +1182,7 @@ function parseCodeBlocks(text) {
   return chunks.length ? chunks : [{ type: 'text', value: text }];
 }
 
-function Composer({ value, mode, imageStyle, disabled, isTyping, onChange, onSend, onStop, onMode, onAttach, onVoice, onImageStyle }) {
+function Composer({ value, mode, model, imageStyle, disabled, isTyping, onChange, onSend, onStop, onMode, onModel, onAttach, onVoice, onImageStyle }) {
   const textRef = useRef(null);
   useEffect(() => {
     if (!textRef.current) return;
@@ -1094,6 +1201,7 @@ function Composer({ value, mode, imageStyle, disabled, isTyping, onChange, onSen
       <div className="composer-row">
         <button className="icon" onClick={onAttach}><Paperclip /></button>
         <textarea ref={textRef} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend(); } }} />
+        <ModelSelector value={model} onChange={onModel} className="composer-model" />
         <button className="icon" onClick={onVoice}><Mic /></button>
         {isTyping ? <button className="send stop" onClick={onStop}><X size={18} /></button> : <button className="send" disabled={!value.trim() || disabled} onClick={onSend}><Send size={18} /></button>}
       </div>
@@ -1137,11 +1245,16 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
     onCloudSave?.({ ...session, canvases: nextCanvases, activeCanvasId: activeCanvas.id });
   };
 
-  const downloadCanvas = async () => {
+  const downloadCanvas = async (format = 'auto') => {
+    const safeTitle = getSafeFileName(activeCanvas.title || 'pluto-canvas');
+
     if (activeCanvas.type === 'Project') {
-      const safeTitle = getSafeFileName(activeCanvas.title || 'pluto-project');
-      const zip = new JSZip();
       const files = activeCanvas.files?.length ? activeCanvas.files : createHtmlProjectFiles();
+      if (format === 'preview-html') {
+        triggerDownload(new Blob([buildProjectPreview(files)], { type: 'text/html;charset=utf-8' }), `${safeTitle}-preview.html`);
+        return;
+      }
+      const zip = new JSZip();
       files.forEach((file) => zip.file(normalizeProjectPath(file.path), file.content || ''));
       zip.file('preview.html', buildProjectPreview(files));
       const blob = await zip.generateAsync({ type: 'blob' });
@@ -1149,11 +1262,27 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
       return;
     }
 
-    const extension = activeCanvas.type === 'Code' ? (languageExtensions[activeCanvas.language] || 'txt') : 'doc';
-    const safeTitle = (activeCanvas.title || 'pluto-canvas').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'pluto-canvas';
-    const content = activeCanvas.type === 'Code' ? activeCanvas.content || '' : buildDocDownload(activeCanvas);
-    const blob = new Blob([content], { type: activeCanvas.type === 'Code' ? 'text/plain;charset=utf-8' : 'application/msword;charset=utf-8' });
-    triggerDownload(blob, `${safeTitle}.${extension}`);
+    if (activeCanvas.type === 'Code') {
+      const extension = languageExtensions[activeCanvas.language] || 'txt';
+      const filename = format === 'txt' ? `${safeTitle}.txt` : `${safeTitle}.${extension}`;
+      triggerDownload(new Blob([activeCanvas.content || ''], { type: 'text/plain;charset=utf-8' }), filename);
+      return;
+    }
+
+    if (format === 'md') {
+      triggerDownload(new Blob([activeCanvas.content || ''], { type: 'text/markdown;charset=utf-8' }), `${safeTitle}.md`);
+      return;
+    }
+
+    if (format === 'txt') {
+      triggerDownload(new Blob([activeCanvas.content || ''], { type: 'text/plain;charset=utf-8' }), `${safeTitle}.txt`);
+      return;
+    }
+
+    const html = buildDocDownload(activeCanvas);
+    const extension = format === 'html' ? 'html' : 'doc';
+    const type = format === 'html' ? 'text/html;charset=utf-8' : 'application/msword;charset=utf-8';
+    triggerDownload(new Blob([html], { type }), `${safeTitle}.${extension}`);
   };
 
   const printCanvasPdf = () => {
@@ -1167,8 +1296,10 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
 
   const handleDownloadOption = (action) => {
     if (action === 'pdf') return printCanvasPdf();
-    return downloadCanvas();
+    return downloadCanvas(action);
   };
+
+  const downloadOptions = getCanvasDownloadOptions(activeCanvas);
 
   const addCanvas = (type = 'Document', templateId = 'landing') => {
     const next = createCanvas(type, templateId);
@@ -1251,6 +1382,14 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
 
   const restoreVersion = (version) => updateCanvas({ ...version, versions: activeCanvas.versions || [] });
 
+  const changeCanvasType = (type) => updateCanvas(type === 'Project' ? { ...createCanvas('Project'), id: activeCanvas.id, createdAt: activeCanvas.createdAt, versions: activeCanvas.versions || [] } : { type, language: type === 'Code' ? 'javascript' : 'markdown' });
+
+  const moreActions = [
+    { label: 'Diff', detail: 'Lihat perubahan terakhir', icon: Code2, disabled: !activeCanvas.versions?.length, onClick: () => setDiffOpen(true) },
+    { label: 'New Canvas', detail: 'Buat canvas kosong baru', icon: Plus, onClick: () => addCanvas() },
+    { label: 'Delete Canvas', detail: canvases.length <= 1 ? 'Kosongkan isi canvas ini' : 'Hapus canvas aktif', icon: Trash2, danger: true, onClick: deleteCanvas },
+  ];
+
   const applyProjectPatch = () => {
     if (!pendingProjectPatch?.files?.length) return;
     const currentFiles = activeCanvas.files?.length ? activeCanvas.files : createHtmlProjectFiles();
@@ -1284,15 +1423,13 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
           </div>
         </div>
         <div className="canvas-stage-actions">
-          <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={(type) => updateCanvas(type === 'Project' ? { ...createCanvas('Project'), id: activeCanvas.id, createdAt: activeCanvas.createdAt, versions: activeCanvas.versions || [] } : { type, language: type === 'Code' ? 'javascript' : 'markdown' })} />
+          <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={changeCanvasType} />
           {activeCanvas.type === 'Code' && <CustomSelect value={activeCanvas.language || 'javascript'} options={canvasLanguages} onChange={(language) => updateCanvas({ language })} />}
           <button onClick={() => setPreviewOpen((value) => !value)}><FileText size={15} /> {previewOpen ? 'Edit' : 'Preview'}</button>
           <button onClick={saveCanvas}><Check size={15} /> Save</button>
-          <CustomSelect value="Download" className="download-select" options={[{ name: 'doc', label: 'Download DOC', detail: 'Buka di Word/Docs' }, { name: 'pdf', label: 'Save as PDF', detail: 'Lewat print dialog' }]} onChange={handleDownloadOption} />
-          <button onClick={() => setDiffOpen(true)} disabled={!activeCanvas.versions?.length}><Code2 size={15} /> Diff</button>
           <button onClick={() => setAiDrawerOpen((value) => !value)}><Sparkles size={15} /> Ask AI</button>
-          <button className="canvas-more" onClick={addCanvas}><Plus size={15} /></button>
-          <button className="canvas-more" onClick={deleteCanvas}><Trash2 size={15} /></button>
+          <CustomSelect value="Export" className="download-select" options={downloadOptions} onChange={handleDownloadOption} />
+          <ActionMenu actions={moreActions} />
         </div>
       </div>
       <div className="canvas-work-area">
@@ -1348,6 +1485,39 @@ function buildDocDownload(canvas) {
     .map((line) => line.trim() ? `<p>${escapeHtml(line)}</p>` : '<p>&nbsp;</p>')
     .join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(canvas.title || 'Pluto Document')}</title><style>body{font-family:Arial,sans-serif;line-height:1.65;color:#1f2937;padding:48px;}h1{font-size:28px;}p{margin:0 0 12px;}</style></head><body><h1>${escapeHtml(canvas.title || 'Pluto Document')}</h1>${body}</body></html>`;
+}
+
+function getCanvasDownloadOptions(canvas) {
+  if (canvas.type === 'Project') {
+    return [
+      { name: 'zip', label: 'Project ZIP', detail: 'Semua file + preview.html', badge: 'CODE' },
+      { name: 'preview-html', label: 'Preview HTML', detail: 'Satu file hasil render', badge: 'HTML' },
+    ];
+  }
+
+  if (canvas.type === 'Code') {
+    const extension = languageExtensions[canvas.language] || 'txt';
+    return [
+      { name: 'source', label: `Source .${extension}`, detail: `File ${canvas.language || 'code'} asli`, badge: extension.toUpperCase() },
+      { name: 'txt', label: 'Plain Text', detail: 'Backup universal .txt', badge: 'TXT' },
+    ];
+  }
+
+  if (canvas.type === 'Plan') {
+    return [
+      { name: 'md', label: 'Markdown', detail: 'Cocok untuk checklist dan docs', badge: 'MD' },
+      { name: 'pdf', label: 'Save as PDF', detail: 'Lewat print dialog', badge: 'PDF' },
+      { name: 'txt', label: 'Plain Text', detail: 'Catatan mentah universal', badge: 'TXT' },
+      { name: 'html', label: 'HTML', detail: 'Buka di browser', badge: 'HTML' },
+    ];
+  }
+
+  return [
+    { name: 'doc', label: 'Word / Docs', detail: 'Format dokumen editable', badge: 'DOC' },
+    { name: 'pdf', label: 'Save as PDF', detail: 'Lewat print dialog', badge: 'PDF' },
+    { name: 'html', label: 'Web Page', detail: 'Buka di browser', badge: 'HTML' },
+    { name: 'txt', label: 'Plain Text', detail: 'Isi mentah tanpa layout', badge: 'TXT' },
+  ];
 }
 
 function getSafeFileName(value) {
@@ -1826,8 +1996,8 @@ function ModeSelector({ value, onChange }) {
   return <div className="mode-selector">{modes.map(({ id, label, icon: Icon }) => <button key={id} className={value === id ? 'active' : ''} onClick={() => onChange(id)}><Icon size={15} /> {label}</button>)}</div>;
 }
 
-function WorkspacePanel({ session, onUpdate, onClose }) {
-  if (session.mode === 'coding') return <CodingWorkspace session={session} onUpdate={onUpdate} onClose={onClose} />;
+function WorkspacePanel({ session, onUpdate, onPrompt, onClose }) {
+  if (session.mode === 'coding') return <CodingWorkspace session={session} onUpdate={onUpdate} onPrompt={onPrompt} onClose={onClose} />;
   if (session.mode === 'image') return <ImageWorkspace session={session} onUpdate={onUpdate} onClose={onClose} />;
   return <ChatWorkspace session={session} onUpdate={onUpdate} onClose={onClose} />;
 }
@@ -1849,17 +2019,42 @@ function ChatWorkspace({ session, onUpdate, onClose }) {
   );
 }
 
-function CodingWorkspace({ session, onUpdate, onClose }) {
+function CodingWorkspace({ session, onUpdate, onPrompt, onClose }) {
+  const codeContext = session.codeContext || { language: 'javascript', snippet: '' };
   const files = session.pseudoFiles?.length ? session.pseudoFiles : [{ id: 'main', name: 'pluto-output.js', content: session.codeOutput || 'Belum ada artifact kode.' }];
+  const updateContext = (patch) => onUpdate({ codeContext: { ...codeContext, ...patch } });
+  const sendCodeTask = (task) => {
+    const snippet = codeContext.snippet?.trim();
+    const labels = {
+      debug: 'Debug kode ini. Cari root cause, jelaskan singkat, lalu berikan patch minimal.',
+      refactor: 'Refactor kode ini agar lebih bersih tanpa mengubah behavior. Jelaskan tradeoff.',
+      explain: 'Jelaskan kode ini, alur eksekusi, dan risiko bug yang mungkin ada.',
+      test: 'Buat test untuk kode ini. Sertakan edge case penting.',
+      review: 'Review kode ini seperti code review. Fokus bug, risiko, security, dan missing tests.',
+    };
+    const prompt = `${labels[task] || labels.debug}\n\nLanguage: ${codeContext.language}\n\n\`\`\`${codeContext.language}\n${snippet || '// tempel kode di Code Context dulu'}\n\`\`\``;
+    onPrompt(prompt);
+  };
   return (
     <aside className="workspace glass workspace-coding">
-      <WorkspaceTitle onClose={onClose}>Artifacts Coding</WorkspaceTitle>
-      <CanvasBoard session={session} onUpdate={onUpdate} />
-      <div className="workspace-tabs"><button className="active">Files</button><button>Code</button><button>Preview</button></div>
-      <div className="workspace-card"><span>Files</span>{files.map((file) => <div className="pseudo-file" key={file.id || file.name}><Code2 size={15} /><strong>{file.name}</strong></div>)}</div>
-      <div className="workspace-card code-artifact"><span>Code Output</span><pre>{session.codeOutput || 'Kode dari respons Pluto akan muncul di sini.'}</pre></div>
-      <div className="workspace-card"><span>Terminal Mock</span><pre>{session.terminalOutput || '$ npm run build\nSiap menjalankan preview mock.'}</pre></div>
-      <div className="workspace-card"><span>Todo Coding</span><textarea value={session.notes || ''} onChange={(event) => onUpdate({ notes: event.target.value })} placeholder="Catatan teknis, bug, atau TODO..." /></div>
+      <WorkspaceTitle onClose={onClose}>Code Lab</WorkspaceTitle>
+      <div className="code-lab-hero"><span>Snippet Context</span><strong>Debug cepat tanpa buka canvas.</strong><p>Workspace menyimpan canvas/project. Code Lab fokus ke snippet, stack trace, review, dan output teknis.</p></div>
+      <div className="workspace-card code-context-card">
+        <div className="code-context-head"><span>Language</span><CustomSelect value={codeContext.language} options={canvasLanguages} onChange={(language) => updateContext({ language })} /></div>
+        <textarea value={codeContext.snippet || ''} onChange={(event) => updateContext({ snippet: event.target.value })} placeholder="Tempel snippet, stack trace, atau diff di sini..." />
+        <div className="code-task-grid">
+          {[
+            ['debug', 'Debug'],
+            ['refactor', 'Refactor'],
+            ['review', 'Review'],
+          ].map(([id, label]) => <button key={id} onClick={() => sendCodeTask(id)}>{label}</button>)}
+        </div>
+      </div>
+      <div className="linked-canvas-block"><CanvasBoard session={session} onUpdate={onUpdate} /></div>
+      <div className="workspace-card code-artifacts-card"><span>Artifacts</span>{files.map((file) => <div className="pseudo-file" key={file.id || file.name}><Code2 size={15} /><strong>{file.name}</strong></div>)}</div>
+      <div className="workspace-card code-artifact"><span>Latest Code Output</span><pre>{session.codeOutput || 'Respons kode Pluto akan muncul di sini setelah kamu bertanya.'}</pre></div>
+      <div className="workspace-card"><span>Terminal Mock</span><pre>{session.terminalOutput || '$ npm run build\nBelum ada output. Kirim task coding dulu.'}</pre></div>
+      <div className="workspace-card"><span>Todo Teknis</span><textarea value={session.notes || ''} onChange={(event) => onUpdate({ notes: event.target.value })} placeholder="Bug, TODO, edge case, atau command yang mau dicoba..." /></div>
     </aside>
   );
 }
