@@ -42,6 +42,32 @@ function createMockResponse({ mode, prompt, model, files }) {
     return `Demo Pluto Coding memakai ${model}.\n\nSaya akan pecah tugas menjadi struktur kecil, lalu beri contoh kode siap adaptasi.\n\n\`\`\`js\nfunction orbitPrompt(input) {\n  return {\n    platform: 'Pluto',\n    mode: 'coding',\n    prompt: input.trim(),\n    ready: Boolean(input.trim()),\n  };\n}\n\nconsole.log(orbitPrompt('${escapeForCode(prompt).slice(0, 42)}'));\n\`\`\`\n\nPenjelasan: fungsi menjaga prompt tetap bersih, memberi metadata mode, dan mudah dipakai sebagai fondasi integrasi backend.${fileNote}`;
   }
 
+  if (mode === 'plan') {
+    return `# Plan: ${prompt.slice(0, 48) || 'Outcome Baru'}
+
+## Outcome
+- Hasil akhir jelas, bisa dipindahkan ke Workspace sebagai Plan canvas.
+
+## Clarify
+- Asumsi: target user dan deadline belum detail.
+- Jika ada deadline keras, prioritas task harus dipersempit.
+
+## Milestone
+- [ ] Definisikan scope MVP dan kriteria selesai.
+- [ ] Pecah pekerjaan jadi sprint kecil.
+- [ ] Review risiko, dependency, dan next action.
+
+## Task Sekarang
+- [ ] Tulis brief 1 paragraf tentang hasil akhir yang kamu mau.
+- [ ] Tentukan 3 fitur atau deliverable wajib.
+
+## Risiko
+- Scope melebar. Mitigasi: batasi ke output yang bisa didemo dulu.
+
+## Next Step
+Kirim detail tujuan, target user, deadline, dan aset yang sudah ada.${fileNote}`;
+  }
+
   if (mode === 'image') {
     return `Demo Gambar AI Pluto memakai ${model}.\n\nPrompt visual dibuat: planet Pluto futuristik, nebula ungu premium, cahaya lavender halus, detail sinematik, rasio 16:9.\n\nHasil sementara muncul sebagai kartu mock di workspace sampai endpoint image generation aktif.${fileNote}`;
   }

@@ -47,7 +47,7 @@ const modes = [
   { id: 'chat', label: 'Chat', icon: Bot },
   { id: 'coding', label: 'Coding', icon: Code2 },
   { id: 'image', label: 'Image', icon: Image },
-  { id: 'file', label: 'File', icon: FileText },
+  { id: 'file', label: 'Artifacts', icon: FileText },
   { id: 'workspace', label: 'Workspace', icon: BrainCircuit },
 ];
 
@@ -55,7 +55,7 @@ const menu = [
   ['chat', 'Chat AI', Bot],
   ['coding', 'Coding', Code2],
   ['image', 'Gambar AI', Image],
-  ['file', 'File', FileText],
+  ['file', 'Artifacts', FileText],
   ['workspace', 'Workspace', BrainCircuit],
   ['settings', 'Pengaturan', Settings],
 ];
@@ -191,6 +191,7 @@ function createSession() {
     messages: [],
     files: [],
     notes: '',
+    planFlow: null,
     codeOutput: '',
     workspaceTab: 'context',
     canvases: [createCanvas('Document')],
@@ -328,7 +329,7 @@ export function App() {
       setCanvasOpen(false);
     }
     if (!isMobile && mode === 'image') setWorkspaceOpen(true);
-    if (mode === 'chat' || mode === 'file' || mode === 'coding') setWorkspaceOpen(false);
+    if (mode === 'chat' || mode === 'file' || mode === 'coding' || mode === 'plan') setWorkspaceOpen(false);
     updateSession(activeSession.id, (session) => ({ ...session, mode }));
   };
 
@@ -343,6 +344,9 @@ export function App() {
     }
 
     const mode = activeSession.mode;
+    const autoPlan = mode !== 'coding' && mode !== 'image' && shouldAutoPlan(prompt);
+    const requestMode = autoPlan ? 'plan' : mode;
+    const finalPrompt = autoPlan || mode === 'plan' ? buildPlanAgentPrompt(prompt, activeSession.planFlow) : prompt;
     const history = activeSession.messages.slice(-8).map((message) => ({ role: message.role, content: message.content }));
     const activeCanvas = activeSession.canvases?.find((canvas) => canvas.id === activeSession.activeCanvasId) || activeSession.canvases?.[0] || null;
     const userMessage = { id: crypto.randomUUID(), role: 'user', content: prompt, createdAt: Date.now() };
@@ -364,9 +368,9 @@ export function App() {
         const response = await streamChat({
           token: authState.token,
           sessionId: activeSession.id,
-          mode,
+          mode: requestMode,
           model,
-          message: prompt,
+          message: finalPrompt,
           history,
           canvas: activeCanvas,
           onToken: (token) => {
@@ -384,9 +388,10 @@ export function App() {
           pseudoFiles: mode === 'coding' ? [{ id: crypto.randomUUID(), name: 'pluto-output.js', content: response }] : session.pseudoFiles,
           terminalOutput: mode === 'coding' ? '$ node pluto-output.js\nArtifact kode siap direview.' : session.terminalOutput,
           imageResults: mode === 'image' ? [{ id: crypto.randomUUID(), prompt, style: imageStyle, createdAt: Date.now() }, ...session.imageResults] : session.imageResults,
-          ...buildSmartCodePatch({ session, response, prompt, mode }),
+          planFlow: autoPlan || mode === 'plan' ? buildNextPlanFlow(prompt, response, session.planFlow) : session.planFlow,
+          ...buildSmartArtifactPatch({ session, response, prompt, mode: requestMode }),
         }));
-        if (buildSmartProjectFromResponse(response, prompt)) setCanvasOpen(true);
+        if (buildSmartArtifactFromResponse(response, prompt, requestMode)) setCanvasOpen(true);
         return;
       }
       let response;
@@ -394,9 +399,9 @@ export function App() {
         let streamed = '';
         response = await streamGuestChat({
           sessionId: activeSession.id,
-            mode,
+            mode: requestMode,
             model,
-            message: prompt,
+            message: finalPrompt,
             history,
             canvas: activeCanvas,
             onToken: (token) => {
@@ -409,7 +414,7 @@ export function App() {
           },
         });
       } catch {
-        response = await askPluto({ mode, prompt, model, files: activeSession.files });
+        response = await askPluto({ mode: requestMode, prompt: finalPrompt, model, files: activeSession.files });
         await streamAssistantMessage(activeSession.id, assistantId, response);
       }
       if (!abortRef.current) {
@@ -424,9 +429,10 @@ export function App() {
             mode === 'image'
               ? [{ id: crypto.randomUUID(), prompt, style: imageStyle, createdAt: Date.now() }, ...session.imageResults]
               : session.imageResults,
-          ...buildSmartCodePatch({ session, response, prompt, mode }),
+          planFlow: autoPlan || mode === 'plan' ? buildNextPlanFlow(prompt, response, session.planFlow) : session.planFlow,
+          ...buildSmartArtifactPatch({ session, response, prompt, mode: requestMode }),
         }));
-        if (buildSmartProjectFromResponse(response, prompt)) setCanvasOpen(true);
+        if (buildSmartArtifactFromResponse(response, prompt, requestMode)) setCanvasOpen(true);
       }
     } catch (error) {
       updateSession(activeSession.id, (session) => ({
@@ -523,6 +529,45 @@ export function App() {
       ...session,
       messages: session.messages.slice(0, index),
     }));
+  };
+
+  const createArtifactFromMessage = (message) => {
+    if (!message?.content?.trim()) return;
+    const messageIndex = activeSession.messages.findIndex((item) => item.id === message.id);
+    const previousUser = activeSession.messages
+      .slice(0, messageIndex >= 0 ? messageIndex : activeSession.messages.length)
+      .reverse()
+      .find((item) => item.role === 'user')?.content || activeSession.title;
+    const artifact = buildSmartArtifactFromResponse(message.content, previousUser, activeSession.mode);
+    if (!artifact) return;
+    updateSession(activeSession.id, (session) => ({
+      ...session,
+      mode: 'workspace',
+      activeCanvasId: artifact.canvas.id,
+      canvases: [artifact.canvas, ...(session.canvases || [])],
+    }));
+    setWorkspaceOpen(false);
+    setCanvasOpen(true);
+  };
+
+  const openArtifact = (artifact) => {
+    if (artifact.kind === 'canvas') {
+      updateSession(activeSession.id, (session) => ({ ...session, mode: 'workspace', activeCanvasId: artifact.id }));
+      setWorkspaceOpen(false);
+      setCanvasOpen(true);
+    }
+  };
+
+  const deleteArtifact = (artifact) => {
+    if (artifact.kind === 'canvas') {
+      updateSession(activeSession.id, (session) => {
+        const canvases = session.canvases?.filter((canvas) => canvas.id !== artifact.id) || [];
+        return { ...session, canvases: canvases.length ? canvases : [createCanvas('Document')], activeCanvasId: canvases[0]?.id || null };
+      });
+    }
+    if (artifact.kind === 'file') updateSession(activeSession.id, (session) => ({ ...session, files: (session.files || []).filter((file) => file.id !== artifact.id) }));
+    if (artifact.kind === 'pseudo') updateSession(activeSession.id, (session) => ({ ...session, pseudoFiles: (session.pseudoFiles || []).filter((file) => file.id !== artifact.id) }));
+    if (artifact.kind === 'image') updateSession(activeSession.id, (session) => ({ ...session, imageResults: (session.imageResults || []).filter((image) => image.id !== artifact.id) }));
   };
 
   const renameSession = (id) => {
@@ -671,6 +716,13 @@ export function App() {
             onAttach={() => fileInputRef.current?.click()}
             onVoice={startVoice}
           />
+        ) : activeSession.mode === 'file' ? (
+          <ArtifactLibrary
+            session={activeSession}
+            onOpen={openArtifact}
+            onDelete={deleteArtifact}
+            onPrompt={sendMessage}
+          />
         ) : (
           <ChatWindow
             session={activeSession}
@@ -681,10 +733,11 @@ export function App() {
             onDelete={deleteMessage}
             onEdit={editMessage}
             onRegenerate={regenerateLast}
+            onArtifact={createArtifactFromMessage}
           />
         )}
 
-        {!isCanvasMode && (
+        {!isCanvasMode && activeSession.mode !== 'file' && (
           <Composer
             value={composer}
             mode={activeSession.mode}
@@ -959,7 +1012,7 @@ function ChatHeader({ mode, model, theme, onMenu, onModel, onSettings, onTheme, 
   return (
     <header className="chat-header glass">
       <button className="icon mobile-menu" onClick={onMenu}><Menu /></button>
-      <div><span>{label === 'Coding' ? 'Mode Coding' : label === 'Image' ? 'Gambar AI' : label === 'Workspace' ? 'AI Canvas' : 'Chat AI'}</span><strong>{label === 'Workspace' ? 'Workspace canvas' : 'Mulai eksplorasi'}</strong></div>
+      <div><span>{label === 'Coding' ? 'Mode Coding' : label === 'Artifacts' ? 'Artifact Library' : label === 'Image' ? 'Gambar AI' : label === 'Workspace' ? 'AI Canvas' : 'Chat AI'}</span><strong>{label === 'Workspace' ? 'Workspace canvas' : label === 'Artifacts' ? 'Output tersimpan' : 'Mulai eksplorasi'}</strong></div>
       <div className="header-actions">
         <ModelSelector value={model} onChange={onModel} />
         <button onClick={onTheme} className="pill">{theme}</button>
@@ -1060,23 +1113,47 @@ function ActionMenu({ actions }) {
   );
 }
 
-function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate }) {
+function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate, onArtifact }) {
   const endRef = useRef(null);
   const lastAssistantId = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())?.id;
   const hasPendingAssistant = session.messages.some((message) => message.role === 'assistant' && !message.content.trim());
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [session.messages, isTyping]);
   return (
     <div className="chat-window">
-      {!session.messages.length ? (session.mode === 'coding' ? <CodingStartScreen onPrompt={onPrompt} /> : <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} />) : (
+      {!session.messages.length ? (session.mode === 'coding' ? <CodingStartScreen onPrompt={onPrompt} /> : session.mode === 'plan' ? <PlanStartScreen onPrompt={onPrompt} /> : <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} />) : (
         <div className="chat-thread">
           {session.messages.map((message) => (
-            <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} onRegenerate={onRegenerate} canRegenerate={!isTyping && message.id === lastAssistantId} />
+            <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} onRegenerate={onRegenerate} onArtifact={onArtifact} canRegenerate={!isTyping && message.id === lastAssistantId} />
           ))}
           {isTyping && !hasPendingAssistant && <div className="typing"><span /><span /><span /> Pluto sedang merangkai orbit jawaban...</div>}
           <div ref={endRef} />
         </div>
       )}
     </div>
+  );
+}
+
+function PlanStartScreen({ onPrompt }) {
+  const actions = [
+    ['Build App', 'Brief jadi milestone, scope MVP, task, dan risiko.', 'Bantu saya membangun app ini sebagai rencana eksekusi bertahap.'],
+    ['Launch Produk', 'Positioning, GTM, demo flow, dan checklist launch.', 'Buat plan launch produk dengan positioning, channel, dan action items.'],
+    ['Sprint Mingguan', 'Prioritas tajam untuk 5 hari kerja.', 'Susun sprint plan 1 minggu dari target ini.'],
+    ['Decision Plan', 'Rekomendasi, tradeoff, risiko, dan next action.', 'Bantu saya mengambil keputusan ini dengan plan aksi.'],
+  ];
+  return (
+    <section className="plan-start">
+      <div className="plan-hero-card glass">
+        <span>Progressive Plan Agent</span>
+        <h1>Ubah ide jadi langkah kerja.</h1>
+        <p>Mode Plan memecah tujuan jadi outcome, milestone, checklist, risiko, dan langkah berikutnya. Setiap jawaban bisa langsung jadi Plan canvas di Workspace.</p>
+        <div className="plan-agent-steps">
+          {['Clarify', 'Structure', 'Execute', 'Review'].map((step) => <b key={step}>{step}</b>)}
+        </div>
+      </div>
+      <div className="plan-action-grid">
+        {actions.map(([title, detail, prompt]) => <button key={title} onClick={() => onPrompt(prompt)}><strong>{title}</strong><span>{detail}</span></button>)}
+      </div>
+    </section>
   );
 }
 
@@ -1109,9 +1186,10 @@ function WelcomeScreen({ mode, profile, onPrompt }) {
   const role = profile?.role ? ` untuk ${profile.role}` : '';
   const copy = {
     chat: [name ? `Halo, ${name}` : 'Apa yang ingin kamu eksplorasi?', `Percakapan tenang${role} untuk ide, riset, dan keputusan cepat.`, ['Buat proposal profesional', 'Tulis email profesional', 'Susun rencana belajar', 'Cari ide konten premium']],
+    plan: ['Rancang langkah kerja', 'Mode agentik untuk mengubah ide jadi outcome, milestone, task, risiko, dan next step.', ['Buat launch plan produk', 'Susun sprint 1 minggu', 'Pecah ide app jadi MVP', 'Bantu ambil keputusan ini']],
     coding: ['Bangun kode lebih cepat', 'Tulis, debug, refactor, dan simpan artifact kode di workspace.', ['Buat komponen React', 'Debug kode JavaScript saya', 'Refactor fungsi ini', 'Buat struktur API backend']],
     image: ['Ciptakan gambar dari imajinasi', 'Studio visual untuk prompt, style, rasio, dan galeri hasil.', ['Planet Pluto luxury cinematic', 'Logo SaaS luar angkasa', 'Poster nebula violet', 'Karakter astronot elegan']],
-    file: ['Bawa file sebagai konteks', 'Upload file lokal lalu pakai sebagai konteks percakapan.', ['Ringkas dokumen ini', 'Cari poin penting', 'Buat action items', 'Bandingkan isi file']],
+    file: ['Artifact Library', 'Penyimpanan output Pluto: dokumen, plan, kode, project, file upload, dan gambar.', ['Buat plan MVP', 'Buat project landing page', 'Buat dokumen brief', 'Review artifact terakhir']],
   }[mode] || ['Pluto', 'Asisten AI luar angkasa untuk chat, coding, gambar, dan ide tanpa batas.', quickPrompts];
   return (
     <section className="welcome">
@@ -1123,7 +1201,7 @@ function WelcomeScreen({ mode, profile, onPrompt }) {
   );
 }
 
-function MessageBubble({ message, onCopy, onDelete, onEdit, onRegenerate, canRegenerate }) {
+function MessageBubble({ message, onCopy, onDelete, onEdit, onRegenerate, onArtifact, canRegenerate }) {
   const chunks = parseCodeBlocks(message.content);
   const isPending = message.role === 'assistant' && !message.content.trim();
   return (
@@ -1135,6 +1213,7 @@ function MessageBubble({ message, onCopy, onDelete, onEdit, onRegenerate, canReg
         <div className="message-actions">
           {message.role === 'user' && <button onClick={() => onEdit(message.id)}><PenLine size={14} /> Edit</button>}
           {canRegenerate && <button onClick={onRegenerate}><RefreshCw size={14} /> Regenerate</button>}
+          {message.role === 'assistant' && <button onClick={() => onArtifact(message)}><BrainCircuit size={14} /> Turn into Workspace</button>}
           <button onClick={() => onCopy(message.content)}><Copy size={14} /> Copy</button>
           <button onClick={() => onDelete(message.id)}><Trash2 size={14} /> Hapus</button>
         </div>
@@ -1191,6 +1270,7 @@ function Composer({ value, mode, model, imageStyle, disabled, isTyping, onChange
   }, [value]);
   const placeholder = {
     chat: 'Tanyakan apa saja...',
+    plan: 'Tulis tujuan besar, Pluto pecah jadi plan bertahap...',
     coding: 'Minta Pluto menulis, debug, atau refactor kode...',
     image: 'Deskripsikan gambar yang ingin dibuat...',
     file: 'Tanyakan sesuatu dari file atau konteks...',
@@ -1593,7 +1673,27 @@ function buildProjectPreview(files) {
     .replace('</body>', `<script>${js}<\/script></body>`);
 }
 
-function buildSmartCodePatch({ session, response, prompt, mode }) {
+function buildSmartArtifactPatch({ session, response, prompt, mode }) {
+  const artifact = buildSmartArtifactFromResponse(response, prompt, mode);
+  if (artifact && artifact.kind !== 'project' && artifact.kind !== 'code' && mode !== 'plan') return {};
+  if (artifact) {
+    const patch = {
+      mode: 'workspace',
+      activeCanvasId: artifact.canvas.id,
+      canvases: [artifact.canvas, ...(session.canvases || [])],
+    };
+    if (artifact.canvas.type === 'Project') {
+      patch.codeOutput = response;
+      patch.pseudoFiles = artifact.canvas.files.map((file) => ({ id: file.id, name: file.path, content: file.content }));
+      patch.terminalOutput = '$ preview project\nProject AI siap direview di canvas preview.';
+    }
+    return patch;
+  }
+  if (mode === 'coding' || looksLikeCode(response) || looksLikeCodeRequest(prompt)) return { mode: 'coding' };
+  return {};
+}
+
+function buildSmartArtifactFromResponse(response, prompt = '', mode = 'chat') {
   const project = buildSmartProjectFromResponse(response, prompt);
   if (project) {
     const canvas = {
@@ -1604,19 +1704,107 @@ function buildSmartCodePatch({ session, response, prompt, mode }) {
       savedAt: null,
       updatedAt: Date.now(),
     };
-    return {
-      mode: 'workspace',
-      activeCanvasId: canvas.id,
-      canvases: [canvas, ...(session.canvases || [])],
-      codeOutput: response,
-      pseudoFiles: project.files.map((file) => ({ id: file.id, name: file.path, content: file.content })),
-      terminalOutput: '$ preview project\nProject AI siap direview di canvas preview.',
+    return { kind: 'project', canvas };
+  }
+
+  if (mode === 'plan' || looksLikePlanResponse(response) || looksLikePlanRequest(prompt)) {
+    const canvas = {
+      ...createCanvas('Plan'),
+      title: makeArtifactTitle(prompt, 'Plan'),
+      content: extractCanvasPayload(response, 'Plan'),
+      savedAt: null,
+      updatedAt: Date.now(),
     };
+    return { kind: 'plan', canvas };
   }
-  if (mode === 'coding' || looksLikeCode(response) || looksLikeCodeRequest(prompt)) {
-    return { mode: 'coding' };
+
+  if (looksLikeCode(response) || looksLikeCodeRequest(prompt)) {
+    const blocks = extractCodeBlocks(response);
+    const first = blocks.find((block) => block.code.trim()) || { language: 'markdown', code: response };
+    const canvas = {
+      ...createCanvas('Code'),
+      title: makeArtifactTitle(prompt, 'Code'),
+      language: first.language === 'js' ? 'javascript' : first.language || 'javascript',
+      content: first.code,
+      savedAt: null,
+      updatedAt: Date.now(),
+    };
+    return { kind: 'code', canvas };
   }
-  return {};
+
+  if (looksLikeDocumentResponse(response)) {
+    const canvas = {
+      ...createCanvas('Document'),
+      title: makeArtifactTitle(prompt, 'Document'),
+      content: extractCanvasPayload(response, 'Document'),
+      savedAt: null,
+      updatedAt: Date.now(),
+    };
+    return { kind: 'document', canvas };
+  }
+
+  return null;
+}
+
+function buildPlanAgentPrompt(prompt, flow) {
+  const previous = flow?.steps?.length ? `\nProgress lama:\n${flow.steps.map((step, index) => `${index + 1}. ${step.title} - ${step.status}`).join('\n')}` : '';
+  return `Mode Plan Pluto. Ubah request user jadi progressive agent workflow, bukan jawaban biasa.
+
+Brief user:
+${prompt}${previous}
+
+Format wajib:
+# Plan: [nama outcome]
+## Outcome
+- hasil akhir yang harus jadi
+## Clarify
+- asumsi penting
+- pertanyaan jika ada info kritis hilang
+## Milestone
+- [ ] milestone 1
+- [ ] milestone 2
+- [ ] milestone 3
+## Task Sekarang
+- [ ] task kecil yang bisa langsung dilakukan
+## Risiko
+- risiko dan mitigasi
+## Next Step
+Satu instruksi lanjut paling berguna.
+
+Jaga sesuai brief Pluto: ubah chat jadi ruang kerja, fokus output nyata, progres bertahap, minim fluff.`;
+}
+
+function buildNextPlanFlow(prompt, response, previousFlow) {
+  const checkboxes = [...String(response || '').matchAll(/[-*]\s+\[[ xX]\]\s+(.+)/g)].map((match) => match[1].trim()).slice(0, 8);
+  const steps = checkboxes.length ? checkboxes.map((title, index) => ({ id: crypto.randomUUID(), title, status: index === 0 ? 'active' : 'pending' })) : previousFlow?.steps || [];
+  return {
+    goal: String(prompt || '').slice(0, 120),
+    stage: steps.some((step) => step.status === 'active') ? 'execute' : 'clarify',
+    steps,
+    updatedAt: Date.now(),
+  };
+}
+
+function looksLikePlanResponse(text) {
+  return /(^|\n)##\s+(Outcome|Milestone|Task Sekarang|Risiko|Next Step)|[-*]\s+\[[ xX]\]|\b(milestone|roadmap|rencana|action items|next step|timeline)\b/i.test(String(text || ''));
+}
+
+function looksLikePlanRequest(text) {
+  return /\b(plan|rencana|roadmap|milestone|task|checklist|sprint|launch|strategi|workflow|langkah)\b/i.test(String(text || ''));
+}
+
+function shouldAutoPlan(text) {
+  const value = String(text || '');
+  return looksLikePlanRequest(value) || /\b(mvp|startup|aplikasi|platform|saas|fitur besar|end-to-end|launch|rilis|sprint)\b/i.test(value) || /\b(bangun|develop|ship)\b/i.test(value) && /\b(produk|app|project besar|sistem)\b/i.test(value);
+}
+
+function looksLikeDocumentResponse(text) {
+  return /^#\s+|\n##\s+|\b(proposal|brief|dokumen|report|laporan|email|pitch)\b/i.test(String(text || ''));
+}
+
+function makeArtifactTitle(prompt, fallback) {
+  const cleaned = String(prompt || '').replace(/buat(in)?|tolong|saya|aku|plan|rencana|dokumen|kode|code/gi, '').trim();
+  return cleaned ? cleaned.slice(0, 42).replace(/^\w/, (letter) => letter.toUpperCase()) : `AI ${fallback}`;
 }
 
 function buildSmartProjectFromResponse(response, prompt = '') {
@@ -1994,6 +2182,87 @@ function FloatingCanvasComposer({ value, canvas, isTyping, onChange, onSend, onS
 
 function ModeSelector({ value, onChange }) {
   return <div className="mode-selector">{modes.map(({ id, label, icon: Icon }) => <button key={id} className={value === id ? 'active' : ''} onClick={() => onChange(id)}><Icon size={15} /> {label}</button>)}</div>;
+}
+
+function ArtifactLibrary({ session, onOpen, onDelete, onPrompt }) {
+  const [query, setQuery] = useState('');
+  const artifacts = buildArtifactList(session).filter((item) => `${item.title} ${item.detail} ${item.type}`.toLowerCase().includes(query.toLowerCase()));
+  const featured = artifacts[0];
+  const quickPrompts = [
+    'Buat plan MVP dari project ini',
+    'Buat dokumen brief project',
+    'Buat struktur file website landing page',
+  ];
+  return (
+    <section className="artifact-page">
+      <div className="artifact-hero glass">
+        <span>Pluto Artifacts</span>
+        <h1>Semua output kerja, tersimpan rapi.</h1>
+        <p>Dokumen, plan, kode, project, file upload, dan hasil AI dikumpulkan di sini. Buka lagi, lanjut edit di Workspace, atau download saat siap.</p>
+        <div className="artifact-search-row">
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari artifact, project, file..." />
+          <button onClick={() => onPrompt('Buat plan dari artifact dan konteks terakhir saya.')}>Auto Plan</button>
+        </div>
+      </div>
+      <div className="artifact-stats">
+        <div className="glass"><span>Total</span><strong>{artifacts.length}</strong></div>
+        <div className="glass"><span>Canvas</span><strong>{session.canvases?.length || 0}</strong></div>
+        <div className="glass"><span>Files</span><strong>{session.files?.length || 0}</strong></div>
+      </div>
+      <div className="artifact-layout">
+        <div className="artifact-grid">
+          {artifacts.length ? artifacts.map((artifact) => <ArtifactCard key={`${artifact.kind}-${artifact.id}`} artifact={artifact} onOpen={onOpen} onDelete={onDelete} />) : <EmptyArtifacts onPrompt={onPrompt} />}
+        </div>
+        <aside className="artifact-side glass">
+          <span>Smart Builder</span>
+          <strong>{featured ? featured.title : 'Belum ada artifact'}</strong>
+          <p>{featured ? featured.preview : 'Mulai chat atau minta Pluto buat project. Output besar otomatis masuk ke Workspace sebagai artifact.'}</p>
+          <div>{quickPrompts.map((prompt) => <button key={prompt} onClick={() => onPrompt(prompt)}>{prompt}</button>)}</div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function buildArtifactList(session) {
+  const canvases = (session.canvases || []).map((canvas) => ({
+    kind: 'canvas',
+    id: canvas.id,
+    type: canvas.type || 'Canvas',
+    title: canvas.title || 'Untitled Canvas',
+    detail: canvas.type === 'Project' ? `${canvas.files?.length || 0} file project` : canvas.language || 'markdown',
+    preview: canvas.type === 'Project' ? (canvas.files || []).map((file) => file.path).join(', ') : String(canvas.content || 'Canvas kosong.').slice(0, 180),
+    createdAt: canvas.updatedAt || canvas.createdAt || Date.now(),
+    icon: canvas.type === 'Project' ? BrainCircuit : canvas.type === 'Code' ? Code2 : FileText,
+  }));
+  const uploads = (session.files || []).map((file) => ({ kind: 'file', id: file.id, type: 'Upload', title: file.name, detail: `${Math.ceil((file.size || 0) / 1024)} KB`, preview: file.type || 'File lokal', createdAt: file.createdAt || Date.now(), icon: FileText }));
+  const pseudo = (session.pseudoFiles || []).map((file) => ({ kind: 'pseudo', id: file.id, type: 'Code Output', title: file.name, detail: 'Generated file', preview: String(file.content || '').slice(0, 180), createdAt: Date.now(), icon: Code2 }));
+  const images = (session.imageResults || []).map((image) => ({ kind: 'image', id: image.id, type: 'Image', title: image.style || 'Generated image', detail: 'Prompt visual', preview: image.prompt || '', createdAt: image.createdAt || Date.now(), icon: Image }));
+  return [...canvases, ...pseudo, ...uploads, ...images].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function ArtifactCard({ artifact, onOpen, onDelete }) {
+  const Icon = artifact.icon;
+  const canOpen = artifact.kind === 'canvas';
+  const download = () => {
+    triggerDownload(new Blob([artifact.preview || artifact.title], { type: 'text/plain;charset=utf-8' }), `${getSafeFileName(artifact.title)}.txt`);
+  };
+  return (
+    <article className={`artifact-card artifact-${artifact.type.toLowerCase().replace(/\s+/g, '-')}`}>
+      <div className="artifact-icon"><Icon size={18} /></div>
+      <div className="artifact-copy"><span>{artifact.type}</span><strong>{artifact.title}</strong><p>{artifact.preview || 'Tidak ada preview.'}</p></div>
+      <div className="artifact-meta"><small>{artifact.detail}</small><small>{new Date(artifact.createdAt).toLocaleDateString('id-ID')}</small></div>
+      <div className="artifact-actions">
+        <button disabled={!canOpen} onClick={() => onOpen(artifact)}>{canOpen ? 'Open' : 'Stored'}</button>
+        <button onClick={download}><Download size={14} /></button>
+        <button onClick={() => onDelete(artifact)}><Trash2 size={14} /></button>
+      </div>
+    </article>
+  );
+}
+
+function EmptyArtifacts({ onPrompt }) {
+  return <div className="empty-artifacts glass"><Sparkles size={22} /><strong>Artifact belum ada.</strong><p>Minta Pluto bikin project, dokumen, plan, atau kode. Output besar otomatis disimpan sebagai artifact.</p><button onClick={() => onPrompt('Buat plan MVP untuk ide produk saya.')}>Buat artifact pertama</button></div>;
 }
 
 function WorkspacePanel({ session, onUpdate, onPrompt, onClose }) {
