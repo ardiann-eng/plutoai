@@ -1271,7 +1271,7 @@ function Composer({ value, mode, model, imageStyle, disabled, isTyping, onChange
     textRef.current.style.height = `${Math.min(textRef.current.scrollHeight, 180)}px`;
   }, [value]);
   const placeholder = {
-    chat: 'Tanyakan apa saja...',
+    chat: 'Tanyakan apa saja',
     plan: 'Tulis tujuan besar, Pluto pecah jadi plan bertahap...',
     coding: 'Tulis prompt kode...',
     image: 'Deskripsikan gambar yang ingin dibuat...',
@@ -1281,7 +1281,7 @@ function Composer({ value, mode, model, imageStyle, disabled, isTyping, onChange
   return (
       <div className="composer glass">
       <div className="composer-row">
-        <button className="icon" onClick={onAttach}><Paperclip /></button>
+        <button className="icon" onClick={onAttach}><Plus /></button>
         <textarea ref={textRef} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend(); } }} />
         <ModelSelector value={model} onChange={onModel} className="composer-model" />
         <button className="icon" onClick={onVoice}><Mic /></button>
