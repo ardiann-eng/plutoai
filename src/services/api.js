@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 const TOKEN_KEY = 'pluto.auth.token.v1';
 const USER_KEY = 'pluto.auth.user.v1';
 

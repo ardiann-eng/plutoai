@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 import { createClient } from '@libsql/client';
 
-dotenv.config({ override: true });
+dotenv.config();
 
 export const db = createClient({
   url: process.env.TURSO_DATABASE_URL,

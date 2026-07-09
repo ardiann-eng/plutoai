@@ -13,6 +13,7 @@ import {
   Download,
   FileText,
   Image,
+  LogIn,
   Menu,
   Mic,
   MoonStar,
@@ -688,18 +689,16 @@ export function App() {
       />
 
       <section className="main-panel">
-        {!isCanvasMode && (
-          <ChatHeader
-            mode={activeSession.mode}
-            model={model}
-            theme={theme}
-            onMenu={() => setDrawerOpen(true)}
-            onModel={setModel}
-            onSettings={() => setSettingsOpen(true)}
-            onTheme={() => setTheme(theme === 'Dark' ? 'Light' : 'Dark')}
-            onCommand={() => setCommandOpen(true)}
-          />
-        )}
+        <ChatHeader
+          mode={activeSession.mode}
+          model={model}
+          theme={theme}
+          onMenu={() => setDrawerOpen(true)}
+          onModel={setModel}
+          onSettings={() => setSettingsOpen(true)}
+          onTheme={() => setTheme(theme === 'Dark' ? 'Light' : 'Dark')}
+          onCommand={() => setCommandOpen(true)}
+        />
 
         {isCanvasMode ? (
           <CanvasStage
@@ -829,6 +828,9 @@ function Sidebar(props) {
   const grouped = groupSessions(filteredSessions);
   const displayName = profile.displayName || authState.user?.name || 'Guest';
   const initials = displayName.slice(0, 1).toUpperCase();
+  const planLabel = usage?.plan || (authState.user ? 'free' : 'guest');
+  const usageLabel = usage ? `${usage.usage.messagesToday} / ${usage.limits.messagesPerDay} pesan` : 'Login untuk sync';
+  const compactAccount = collapsed && !drawerOpen;
   return (
     <aside className={`sidebar glass ${drawerOpen ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}>
       <div className="mobile-close"><button onClick={onClose}><X size={18} /></button></div>
@@ -859,11 +861,11 @@ function Sidebar(props) {
         {authState.user || profile.displayName ? (
           <button className="account-trigger" onClick={onAccount} title="Account & Plan">
             <b>{initials}</b>
-            <span>{collapsed ? '' : displayName}</span>
-            <small>{collapsed ? '' : `${usage?.plan || 'free'} plan`}</small>
-            {!collapsed && <ChevronRight size={15} />}
+            <span>{compactAccount ? '' : displayName}</span>
+            <small>{compactAccount ? '' : `${planLabel} plan · ${usageLabel}`}</small>
+            {!compactAccount && <ChevronRight size={15} />}
           </button>
-        ) : <button onClick={onAuth}>Login</button>}
+        ) : <button className="login-trigger" onClick={onAuth} title="Login"><LogIn size={17} /> <span>Login</span></button>}
       </div>
     </aside>
   );
@@ -1014,6 +1016,7 @@ function ChatHeader({ mode, model, theme, onMenu, onModel, onSettings, onTheme, 
       <button className="icon mobile-menu" onClick={onMenu}><Menu /></button>
       <div><span>{label === 'Coding' ? 'Mode Coding' : label === 'Artifacts' ? 'Artifact Library' : label === 'Image' ? 'Gambar AI' : label === 'Workspace' ? 'AI Canvas' : 'Chat AI'}</span><strong>{label === 'Workspace' ? 'Workspace canvas' : label === 'Artifacts' ? 'Output tersimpan' : 'Mulai eksplorasi'}</strong></div>
       <div className="header-actions">
+        <button className="command-trigger" onClick={onCommand}>⌘K</button>
         <ModelSelector value={model} onChange={onModel} />
         <button onClick={onTheme} className="pill">{theme}</button>
         <button className="icon" onClick={onSettings}><Settings /></button>
@@ -1116,7 +1119,7 @@ function ActionMenu({ actions }) {
 function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate, onArtifact }) {
   const endRef = useRef(null);
   const lastAssistantId = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())?.id;
-  const hasPendingAssistant = session.messages.some((message) => message.role === 'assistant' && !message.content.trim());
+  const hasActiveAssistant = session.messages[session.messages.length - 1]?.role === 'assistant';
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [session.messages, isTyping]);
   return (
     <div className="chat-window">
@@ -1125,7 +1128,7 @@ function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, on
           {session.messages.map((message) => (
             <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} onRegenerate={onRegenerate} onArtifact={onArtifact} canRegenerate={!isTyping && message.id === lastAssistantId} />
           ))}
-          {isTyping && !hasPendingAssistant && <div className="typing"><span /><span /><span /> Pluto sedang merangkai orbit jawaban...</div>}
+          {isTyping && !hasActiveAssistant && <div className="typing"><span /><span /><span /> Pluto sedang merangkai orbit jawaban...</div>}
           <div ref={endRef} />
         </div>
       )}
@@ -1159,23 +1162,23 @@ function PlanStartScreen({ onPrompt }) {
 
 function CodingStartScreen({ onPrompt }) {
   const actions = [
-    ['Debug error', 'Tempel stack trace, cari root cause, beri patch kecil.', 'Debug error ini dan berikan patch minimal.'],
-    ['Refactor', 'Rapikan fungsi tanpa mengubah behavior.', 'Refactor kode ini agar lebih bersih tanpa over-engineering.'],
-    ['Review diff', 'Cari bug, regresi, edge case, dan missing tests.', 'Review perubahan ini dengan fokus bug dan risiko.'],
-    ['Write tests', 'Buat test cases untuk fungsi atau komponen.', 'Buat test untuk kode ini, sertakan edge case penting.'],
-    ['Generate component', 'Buat komponen React siap pakai.', 'Buat komponen React modern berdasarkan brief ini.'],
-    ['Explain code', 'Jelaskan alur kode dan bagian berisiko.', 'Jelaskan kode ini dengan ringkas dan tunjukkan risiko.'],
+    ['Debug / Fix', 'Tempel error atau stack trace. Pluto cari root cause dan beri patch kecil.', 'Debug error ini. Cari root cause, jelaskan singkat, lalu berikan patch minimal.'],
+    ['Review Diff', 'Paste perubahan kode. Pluto cari bug, regresi, security risk, dan missing tests.', 'Review diff ini dengan fokus bug, regresi, security, dan missing tests.'],
+    ['Build Component', 'Ubah brief UI jadi komponen React yang clean dan siap edit.', 'Buat komponen React modern berdasarkan brief ini.'],
   ];
   return (
     <section className="coding-start">
-      <div className="coding-hero glass">
+      <div className="coding-hero glass code-welcome">
         <span>Pluto Code</span>
-        <h1>Build, debug, refactor.</h1>
-        <p>Mode coding fokus ke snippet, stack trace, patch, review, dan artifact. Workspace tetap untuk canvas/project, sementara Coding jadi cockpit teknis cepat.</p>
-        <div className="coding-command-line"><Code2 size={16} /><code>paste error | ask patch | review diff | write tests</code></div>
+        <h1>Kode lebih tenang.</h1>
+        <p>Tempel error, diff, atau brief komponen. Pluto bantu cari root cause, refactor, review, dan simpan output sebagai artifact.</p>
+        <div className="coding-focus-card">
+          <div><Code2 size={18} /><strong>Mulai dari masalah nyata</strong><span>Error, diff, atau brief UI paling berguna untuk mode ini.</span></div>
+          <button onClick={() => onPrompt(actions[0][2])}>Debug sekarang</button>
+        </div>
       </div>
-      <div className="coding-action-grid">
-        {actions.map(([title, detail, prompt]) => <button key={title} onClick={() => onPrompt(prompt)}><strong>{title}</strong><span>{detail}</span></button>)}
+      <div className="coding-action-strip">
+        {actions.slice(1).map(([title, detail, prompt]) => <button key={title} onClick={() => onPrompt(prompt)}><strong>{title}</strong><span>{detail}</span></button>)}
       </div>
     </section>
   );
@@ -1185,18 +1188,17 @@ function WelcomeScreen({ mode, profile, onPrompt }) {
   const name = profile?.displayName?.trim();
   const role = profile?.role ? ` untuk ${profile.role}` : '';
   const copy = {
-    chat: [name ? `Halo, ${name}` : 'Apa yang ingin kamu eksplorasi?', `Percakapan tenang${role} untuk ide, riset, dan keputusan cepat.`, ['Buat proposal profesional', 'Tulis email profesional', 'Susun rencana belajar', 'Cari ide konten premium']],
+    chat: [name ? `Siang, ${name}` : 'Mulai dari mana hari ini?', `Chat, coding, dokumen, gambar, dan canvas dalam satu workspace Pluto${role}.`, ['Buat rencana produk', 'Review kode saya', 'Buat dokumen profesional', 'Bangun canvas ide', 'Prompt gambar premium']],
     plan: ['Rancang langkah kerja', 'Mode agentik untuk mengubah ide jadi outcome, milestone, task, risiko, dan next step.', ['Buat launch plan produk', 'Susun sprint 1 minggu', 'Pecah ide app jadi MVP', 'Bantu ambil keputusan ini']],
     coding: ['Bangun kode lebih cepat', 'Tulis, debug, refactor, dan simpan artifact kode di workspace.', ['Buat komponen React', 'Debug kode JavaScript saya', 'Refactor fungsi ini', 'Buat struktur API backend']],
     image: ['Ciptakan gambar dari imajinasi', 'Studio visual untuk prompt, style, rasio, dan galeri hasil.', ['Planet Pluto luxury cinematic', 'Logo SaaS luar angkasa', 'Poster nebula violet', 'Karakter astronot elegan']],
     file: ['Artifact Library', 'Penyimpanan output Pluto: dokumen, plan, kode, project, file upload, dan gambar.', ['Buat plan MVP', 'Buat project landing page', 'Buat dokumen brief', 'Review artifact terakhir']],
   }[mode] || ['Pluto', 'Asisten AI luar angkasa untuk chat, coding, gambar, dan ide tanpa batas.', quickPrompts];
   return (
-    <section className="welcome">
+    <section className="welcome ai-home">
       <h1>{copy[0]}</h1>
       <p>{copy[1]}</p>
-      <div className="quick-grid">{copy[2].map((prompt) => <button key={prompt} onClick={() => onPrompt(prompt)}>{prompt}</button>)}</div>
-      <div className="feature-cards">{['Chat AI', 'Coding', 'Gambar AI', 'File Context', 'Voice Input'].map((item) => <article key={item}>{item}<span>Tanyakan apa saja</span></article>)}</div>
+      <div className="quick-grid prompt-chips">{copy[2].map((prompt) => <button key={prompt} onClick={() => onPrompt(prompt)}>{prompt}</button>)}</div>
     </section>
   );
 }
@@ -1271,7 +1273,7 @@ function Composer({ value, mode, model, imageStyle, disabled, isTyping, onChange
   const placeholder = {
     chat: 'Tanyakan apa saja...',
     plan: 'Tulis tujuan besar, Pluto pecah jadi plan bertahap...',
-    coding: 'Minta Pluto menulis, debug, atau refactor kode...',
+    coding: 'Tulis prompt kode...',
     image: 'Deskripsikan gambar yang ingin dibuat...',
     file: 'Tanyakan sesuatu dari file atau konteks...',
   }[mode] || 'Tanyakan apa saja...';
@@ -2186,39 +2188,40 @@ function ModeSelector({ value, onChange }) {
 
 function ArtifactLibrary({ session, onOpen, onDelete, onPrompt }) {
   const [query, setQuery] = useState('');
-  const artifacts = buildArtifactList(session).filter((item) => `${item.title} ${item.detail} ${item.type}`.toLowerCase().includes(query.toLowerCase()));
-  const featured = artifacts[0];
-  const quickPrompts = [
-    'Buat plan MVP dari project ini',
-    'Buat dokumen brief project',
-    'Buat struktur file website landing page',
+  const [filter, setFilter] = useState('All');
+  const allArtifacts = buildArtifactList(session);
+  const artifactTypes = ['All', ...Array.from(new Set(allArtifacts.map((item) => item.type)))];
+  const artifacts = allArtifacts.filter((item) => {
+    const matchesQuery = `${item.title} ${item.detail} ${item.type} ${item.preview}`.toLowerCase().includes(query.toLowerCase());
+    const matchesFilter = filter === 'All' || item.type === filter;
+    return matchesQuery && matchesFilter;
+  });
+  const stats = [
+    ['Semua output', allArtifacts.length],
+    ['Dokumen', allArtifacts.filter((item) => ['Document', 'Plan'].includes(item.type)).length],
+    ['Kode & project', allArtifacts.filter((item) => ['Code', 'Code Output', 'Project'].includes(item.type)).length],
+    ['File & gambar', allArtifacts.filter((item) => ['Upload', 'Image'].includes(item.type)).length],
   ];
   return (
     <section className="artifact-page">
-      <div className="artifact-hero glass">
-        <span>Pluto Artifacts</span>
-        <h1>Semua output kerja, tersimpan rapi.</h1>
-        <p>Dokumen, plan, kode, project, file upload, dan hasil AI dikumpulkan di sini. Buka lagi, lanjut edit di Workspace, atau download saat siap.</p>
+      <div className="artifact-hero">
+        <span>AI Output Library</span>
+        <h1>Output Library</h1>
+        <p>Riwayat hasil AI: dokumen, plan, kode, project, file upload, dan gambar. Buka ulang, lanjutkan di Workspace, atau download.</p>
         <div className="artifact-search-row">
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari artifact, project, file..." />
-          <button onClick={() => onPrompt('Buat plan dari artifact dan konteks terakhir saya.')}>Auto Plan</button>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari output, file, kode, project..." />
+          <CustomSelect value={filter} options={artifactTypes} onChange={setFilter} className="artifact-filter" />
+          <button onClick={() => onPrompt('Ringkas semua output AI di sesi ini dan beri next action.')}>Summarize</button>
         </div>
       </div>
       <div className="artifact-stats">
-        <div className="glass"><span>Total</span><strong>{artifacts.length}</strong></div>
-        <div className="glass"><span>Canvas</span><strong>{session.canvases?.length || 0}</strong></div>
-        <div className="glass"><span>Files</span><strong>{session.files?.length || 0}</strong></div>
+        {stats.map(([label, value]) => <div className="glass" key={label}><span>{label}</span><strong>{value}</strong></div>)}
       </div>
       <div className="artifact-layout">
-        <div className="artifact-grid">
+        <div className="artifact-main-list">
+          <div className="artifact-list-head"><span>Output terbaru</span><strong>{artifacts.length} item · {filter === 'All' ? 'Semua tipe' : filter}</strong></div>
           {artifacts.length ? artifacts.map((artifact) => <ArtifactCard key={`${artifact.kind}-${artifact.id}`} artifact={artifact} onOpen={onOpen} onDelete={onDelete} />) : <EmptyArtifacts onPrompt={onPrompt} />}
         </div>
-        <aside className="artifact-side glass">
-          <span>Smart Builder</span>
-          <strong>{featured ? featured.title : 'Belum ada artifact'}</strong>
-          <p>{featured ? featured.preview : 'Mulai chat atau minta Pluto buat project. Output besar otomatis masuk ke Workspace sebagai artifact.'}</p>
-          <div>{quickPrompts.map((prompt) => <button key={prompt} onClick={() => onPrompt(prompt)}>{prompt}</button>)}</div>
-        </aside>
       </div>
     </section>
   );
@@ -2251,11 +2254,11 @@ function ArtifactCard({ artifact, onOpen, onDelete }) {
     <article className={`artifact-card artifact-${artifact.type.toLowerCase().replace(/\s+/g, '-')}`}>
       <div className="artifact-icon"><Icon size={18} /></div>
       <div className="artifact-copy"><span>{artifact.type}</span><strong>{artifact.title}</strong><p>{artifact.preview || 'Tidak ada preview.'}</p></div>
-      <div className="artifact-meta"><small>{artifact.detail}</small><small>{new Date(artifact.createdAt).toLocaleDateString('id-ID')}</small></div>
+      <div className="artifact-meta"><small>{artifact.detail}</small><small>{new Date(artifact.createdAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</small></div>
       <div className="artifact-actions">
-        <button disabled={!canOpen} onClick={() => onOpen(artifact)}>{canOpen ? 'Open' : 'Stored'}</button>
-        <button onClick={download}><Download size={14} /></button>
-        <button onClick={() => onDelete(artifact)}><Trash2 size={14} /></button>
+        <button disabled={!canOpen} onClick={() => onOpen(artifact)}>{canOpen ? 'Open in Workspace' : 'Stored output'}</button>
+        <button onClick={download} title="Download"><Download size={14} /></button>
+        <button onClick={() => onDelete(artifact)} title="Hapus"><Trash2 size={14} /></button>
       </div>
     </article>
   );

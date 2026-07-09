@@ -3,13 +3,17 @@ import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { db, requireEnv } from './db.js';
 import { buildSystemPrompt } from './skills.js';
 
-dotenv.config({ override: true });
+dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT || 8787);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.resolve(__dirname, '..', 'dist');
 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
@@ -568,6 +572,14 @@ app.delete('/api/canvases/:id', auth, async (req, res) => {
   await db.execute({ sql: 'DELETE FROM canvases WHERE id = ? AND user_id = ?', args: [req.params.id, req.user.id] });
   res.json({ ok: true });
 });
+
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(distDir));
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+}
 
 app.use((error, _req, res, _next) => {
   res.status(500).json({ error: error.message || 'Server error.' });
