@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import JSZip from 'jszip';
 import {
   Bot,
@@ -71,6 +72,39 @@ const quickPrompts = [
 const imageStyles = ['Realistic', '3D', 'Anime', 'Logo', 'Space Art'];
 const canvasTypes = ['Document', 'Code', 'Plan', 'Project'];
 const canvasLanguages = ['javascript', 'jsx', 'typescript', 'tsx', 'html', 'css', 'sql', 'markdown'];
+const canvasTypeLabels = {
+  Document: 'Document',
+  Code: 'Code',
+  Plan: 'Plan',
+  Project: 'Project',
+};
+const canvasTypeShortLabels = {
+  Document: 'Doc',
+  Code: 'Code',
+  Plan: 'Plan',
+  Project: 'Web',
+};
+// Ensure trigger never falls back to full "Document" (gets truncated to "D...")
+const canvasLangLabels = {
+  javascript: 'JavaScript',
+  jsx: 'JSX',
+  typescript: 'TypeScript',
+  tsx: 'TSX',
+  html: 'HTML',
+  css: 'CSS',
+  sql: 'SQL',
+  markdown: 'Markdown',
+};
+const canvasLangShortLabels = {
+  javascript: 'JS',
+  jsx: 'JSX',
+  typescript: 'TS',
+  tsx: 'TSX',
+  html: 'HTML',
+  css: 'CSS',
+  sql: 'SQL',
+  markdown: 'MD',
+};
 const languageExtensions = { javascript: 'js', jsx: 'jsx', typescript: 'ts', tsx: 'tsx', html: 'html', css: 'css', sql: 'sql', markdown: 'md' };
 
 const skillHighlights = [
@@ -231,6 +265,7 @@ export function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [codeLabOpen, setCodeLabOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
@@ -261,6 +296,8 @@ export function App() {
   useEffect(() => {
     if (!isMobile && activeSession?.mode === 'image') setWorkspaceOpen(true);
     if (isMobile) setWorkspaceOpen(false);
+    // Code Lab full-page is mobile-only and only makes sense in coding mode
+    if (!isMobile || activeSession?.mode !== 'coding') setCodeLabOpen(false);
   }, [activeSession?.id, activeSession?.mode, isMobile]);
 
   useEffect(() => saveStored(STORAGE_KEY, sessions), [sessions]);
@@ -328,11 +365,23 @@ export function App() {
     if (mode === 'workspace') {
       setWorkspaceOpen(false);
       setCanvasOpen(false);
+      setCodeLabOpen(false);
     }
     if (!isMobile && mode === 'image') setWorkspaceOpen(true);
-    if (mode === 'chat' || mode === 'file' || mode === 'coding' || mode === 'plan') setWorkspaceOpen(false);
+    if (mode === 'chat' || mode === 'file' || mode === 'coding' || mode === 'plan') {
+      setWorkspaceOpen(false);
+      if (mode !== 'coding') setCodeLabOpen(false);
+    }
     updateSession(activeSession.id, (session) => ({ ...session, mode }));
   };
+
+  const openCodeLab = () => {
+    setCodeLabOpen(true);
+    setWorkspaceOpen(false);
+    setDrawerOpen(false);
+  };
+
+  const closeCodeLab = () => setCodeLabOpen(false);
 
   const sendMessage = async (overridePrompt) => {
     const prompt = (overridePrompt ?? composer).trim();
@@ -392,7 +441,10 @@ export function App() {
           planFlow: autoPlan || mode === 'plan' ? buildNextPlanFlow(prompt, response, session.planFlow) : session.planFlow,
           ...buildSmartArtifactPatch({ session, response, prompt, mode: requestMode }),
         }));
-        if (buildSmartArtifactFromResponse(response, prompt, requestMode)) setCanvasOpen(true);
+        // Only open canvas when user is already in Workspace, or Plan mode intentionally creates a plan canvas.
+        if (shouldAutoOpenCanvas(requestMode, mode) && buildSmartArtifactFromResponse(response, prompt, requestMode)) {
+          setCanvasOpen(true);
+        }
         return;
       }
       let response;
@@ -433,7 +485,9 @@ export function App() {
           planFlow: autoPlan || mode === 'plan' ? buildNextPlanFlow(prompt, response, session.planFlow) : session.planFlow,
           ...buildSmartArtifactPatch({ session, response, prompt, mode: requestMode }),
         }));
-        if (buildSmartArtifactFromResponse(response, prompt, requestMode)) setCanvasOpen(true);
+        if (shouldAutoOpenCanvas(requestMode, mode) && buildSmartArtifactFromResponse(response, prompt, requestMode)) {
+          setCanvasOpen(true);
+        }
       }
     } catch (error) {
       updateSession(activeSession.id, (session) => ({
@@ -646,11 +700,15 @@ export function App() {
 
   if (!activeSession) return null;
   const isCanvasMode = activeSession.mode === 'workspace';
-  const effectiveWorkspaceOpen = !isCanvasMode && (workspaceOpen || (!isMobile && ['image', 'coding'].includes(activeSession.mode)));
+  const isCodeLabPage = isMobile && codeLabOpen && activeSession.mode === 'coding';
+  // Desktop: coding/image keep side panel. Mobile coding uses full-page Code Lab (not AI Workspace, not sheet).
+  const effectiveWorkspaceOpen = !isCanvasMode && !isCodeLabPage && (
+    workspaceOpen || (!isMobile && ['image', 'coding'].includes(activeSession.mode))
+  );
   const effectiveSidebarCollapsed = sidebarCollapsed || isCanvasMode;
 
   return (
-    <main className={`app-shell theme-${theme.toLowerCase()} layout-${activeSession.mode} ${effectiveWorkspaceOpen ? 'workspace-open' : ''} ${effectiveSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <main className={`app-shell theme-${theme.toLowerCase()} layout-${activeSession.mode} ${effectiveWorkspaceOpen ? 'workspace-open' : ''} ${isCodeLabPage ? 'code-lab-page-open' : ''} ${effectiveSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <SpaceBackdrop />
       <Sidebar
         sessions={sessions}
@@ -688,17 +746,19 @@ export function App() {
         onLogout={() => { logout(); setAccountOpen(false); }}
       />
 
-      <section className="main-panel">
-        <ChatHeader
-          mode={activeSession.mode}
-          model={model}
-          theme={theme}
-          onMenu={() => setDrawerOpen(true)}
-          onModel={setModel}
-          onSettings={() => setSettingsOpen(true)}
-          onTheme={() => setTheme(theme === 'Dark' ? 'Light' : 'Dark')}
-          onCommand={() => setCommandOpen(true)}
-        />
+      <section className={`main-panel${isCodeLabPage ? ' main-panel-codelab' : ''}`}>
+        {!isCodeLabPage && (
+          <ChatHeader
+            mode={activeSession.mode}
+            model={model}
+            theme={theme}
+            onMenu={() => setDrawerOpen(true)}
+            onModel={setModel}
+            onSettings={() => setSettingsOpen(true)}
+            onTheme={() => setTheme(theme === 'Dark' ? 'Light' : 'Dark')}
+            onCommand={() => setCommandOpen(true)}
+          />
+        )}
 
         {isCanvasMode ? (
           <CanvasStage
@@ -709,11 +769,24 @@ export function App() {
             onUpdate={(patch) => updateSession(activeSession.id, (s) => ({ ...s, ...patch }))}
             onCloudSave={(updatedSession) => syncSession(updatedSession)}
             onOpen={setCanvasOpen}
+            onMenu={() => setDrawerOpen(true)}
             onComposer={setComposer}
             onSend={() => sendMessage()}
             onStop={stopGenerating}
             onAttach={() => fileInputRef.current?.click()}
             onVoice={startVoice}
+          />
+        ) : isCodeLabPage ? (
+          <CodingWorkspace
+            session={activeSession}
+            fullPage
+            onMenu={() => setDrawerOpen(true)}
+            onUpdate={(patch) => updateSession(activeSession.id, (s) => ({ ...s, ...patch }))}
+            onPrompt={(prompt) => {
+              closeCodeLab();
+              sendMessage(prompt);
+            }}
+            onClose={closeCodeLab}
           />
         ) : activeSession.mode === 'file' ? (
           <ArtifactLibrary
@@ -728,6 +801,7 @@ export function App() {
             isTyping={isTyping}
             onPrompt={sendMessage}
             profile={profile}
+            onOpenLab={isMobile && activeSession.mode === 'coding' ? openCodeLab : undefined}
             onCopy={(text) => navigator.clipboard.writeText(text)}
             onDelete={deleteMessage}
             onEdit={editMessage}
@@ -736,7 +810,7 @@ export function App() {
           />
         )}
 
-        {!isCanvasMode && activeSession.mode !== 'file' && (
+        {!isCanvasMode && !isCodeLabPage && activeSession.mode !== 'file' && (
           <Composer
             value={composer}
             mode={activeSession.mode}
@@ -754,9 +828,29 @@ export function App() {
             onImageStyle={setImageStyle}
           />
         )}
+
+        {isMobile && !isCanvasMode && !isCodeLabPage && activeSession.mode === 'coding' && (
+          <button type="button" className="mobile-lab-fab" onClick={openCodeLab} aria-label="Buka Code Lab">
+            <Code2 size={18} />
+            <span>Lab</span>
+          </button>
+        )}
       </section>
 
-      {effectiveWorkspaceOpen && <WorkspacePanel session={activeSession} onUpdate={(patch) => updateSession(activeSession.id, (s) => ({ ...s, ...patch }))} onPrompt={sendMessage} onClose={() => setWorkspaceOpen(false)} />}
+      {isMobile && effectiveWorkspaceOpen && (
+        <button type="button" className="workspace-sheet-backdrop" aria-label="Tutup panel" onClick={() => setWorkspaceOpen(false)} />
+      )}
+      {effectiveWorkspaceOpen && (
+        <WorkspacePanel
+          session={activeSession}
+          onUpdate={(patch) => updateSession(activeSession.id, (s) => ({ ...s, ...patch }))}
+          onPrompt={(prompt) => {
+            sendMessage(prompt);
+            if (isMobile) setWorkspaceOpen(false);
+          }}
+          onClose={() => setWorkspaceOpen(false)}
+        />
+      )}
 
       <input ref={fileInputRef} className="hidden" type="file" multiple onChange={attachFiles} />
       <SettingsModal
@@ -1025,105 +1119,267 @@ function ChatHeader({ mode, model, theme, onMenu, onModel, onSettings, onTheme, 
   );
 }
 
-function ModelSelector({ value, onChange, className = '' }) {
-  return <CustomSelect value={value} options={MODEL_OPTIONS} onChange={onChange} className={`model-select ${className}`} />;
+function ModelSelector({ value, onChange, className = '', fixedMenu = false }) {
+  return <CustomSelect value={value} options={MODEL_OPTIONS} onChange={onChange} className={`model-select ${className}`} fixedMenu={fixedMenu} />;
 }
 
-function CustomSelect({ value, options, onChange, className = '', labels = {} }) {
+function CustomSelect({ value, options, onChange, className = '', labels = {}, menuLabels = null, fixedMenu = false, menuWidth = 220 }) {
   const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState(null);
   const ref = useRef(null);
+  const menuRef = useRef(null);
+  const usePortal = fixedMenu || className.includes('portal-menu');
+  const optionLabels = menuLabels || labels;
+
+  const resolveLabel = (optionValue, source = labels) => {
+    if (source[optionValue]) return source[optionValue];
+    if (typeof optionValue === 'string') return optionValue;
+    return optionValue?.label || optionValue?.name || '';
+  };
 
   useEffect(() => {
+    if (!open) return undefined;
     const close = (event) => {
-      if (!ref.current?.contains(event.target)) setOpen(false);
+      if (ref.current?.contains(event.target) || menuRef.current?.contains(event.target)) return;
+      setOpen(false);
     };
     document.addEventListener('pointerdown', close);
     return () => document.removeEventListener('pointerdown', close);
-  }, []);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !usePortal || !ref.current) {
+      if (!usePortal) setMenuStyle(null);
+      return undefined;
+    }
+
+    const placeMenu = () => {
+      if (!ref.current) return;
+      const trigger = ref.current.querySelector('.select-trigger') || ref.current;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(Math.max(menuWidth, rect.width + 24), window.innerWidth - 16);
+      // Align left edge with trigger so dropdown feels attached
+      let left = rect.left;
+      left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+      const gap = 6;
+      const menuHeight = menuRef.current?.offsetHeight || 160;
+      let top = rect.bottom + gap;
+      let placement = 'below';
+      if (top + menuHeight > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - menuHeight - gap);
+        placement = 'above';
+      }
+      const caretLeft = Math.min(width - 20, Math.max(16, rect.left + rect.width / 2 - left - 7));
+      setMenuStyle({
+        position: 'fixed',
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        bottom: 'auto',
+        right: 'auto',
+        zIndex: 100000,
+        transform: 'none',
+        opacity: 1,
+        visibility: 'visible',
+        pointerEvents: 'auto',
+        margin: 0,
+        animation: 'none',
+        ['--caret-left']: `${caretLeft}px`,
+        ['--menu-placement']: placement,
+      });
+    };
+
+    placeMenu();
+    const raf = requestAnimationFrame(placeMenu);
+    window.addEventListener('resize', placeMenu);
+    window.addEventListener('scroll', placeMenu, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', placeMenu);
+      window.removeEventListener('scroll', placeMenu, true);
+    };
+  }, [open, usePortal, value, menuWidth, options]);
+
+  const menu = open ? (
+    <div
+      className={`select-menu glass${usePortal ? ' select-menu-fixed' : ''}${open ? ' is-open' : ''}${menuStyle?.['--menu-placement'] === 'above' ? ' place-above' : ' place-below'}`}
+      ref={menuRef}
+      style={usePortal ? (menuStyle || { position: 'fixed', left: -9999, top: 0, opacity: 0, pointerEvents: 'none' }) : undefined}
+      role="listbox"
+    >
+      {options.map((option) => {
+        const item = typeof option === 'string'
+          ? { name: option, label: resolveLabel(option, optionLabels) }
+          : { ...option, label: option.label || resolveLabel(option.name, optionLabels) };
+        const selected = item.name === value;
+        return (
+          <button
+            key={item.id || item.name}
+            type="button"
+            role="option"
+            aria-selected={selected}
+            className={selected ? 'selected' : ''}
+            onClick={() => {
+              onChange(item.name);
+              setOpen(false);
+            }}
+          >
+            <span className="select-copy">
+              <strong>{item.label || item.name}</strong>
+              {item.detail && <small>{item.detail}</small>}
+            </span>
+            {item.badge && <em>{item.badge}</em>}
+            {selected && <Check size={15} className="select-check" />}
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   return (
-    <div className={`custom-select ${className}`} ref={ref}>
-      <button className="select-trigger" type="button" onClick={() => setOpen((value) => !value)}>
-        <span>{labels[value] || value}</span>
+    <div className={`custom-select ${className}${open ? ' is-open' : ''}`} ref={ref}>
+      <button
+        className="select-trigger"
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        title={resolveLabel(value)}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+      >
+        <span>{resolveLabel(value)}</span>
         <ChevronDown size={16} className={open ? 'rotate' : ''} />
       </button>
-      {open && (
-        <div className="select-menu glass">
-          {options.map((option) => (
-            (() => {
-              const item = typeof option === 'string' ? { name: option, label: labels[option] || option } : option;
-              return (
-            <button
-              key={item.id || item.name}
-              type="button"
-              className={item.name === value ? 'selected' : ''}
-              onClick={() => {
-                onChange(item.name);
-                setOpen(false);
-              }}
-            >
-              <span className="select-copy"><strong>{item.label || item.name}</strong>{item.detail && <small>{item.detail}</small>}</span>
-              {item.badge && <em>{item.badge}</em>}
-              {item.name === value && <Check size={15} />}
-            </button>
-              );
-            })()
-          ))}
-        </div>
-      )}
+      {usePortal && menu && typeof document !== 'undefined' ? createPortal(menu, document.body) : menu}
     </div>
   );
 }
 
-function ActionMenu({ actions }) {
+function ActionMenu({ actions, compact = false }) {
   const [open, setOpen] = useState(false);
+  const [panelStyle, setPanelStyle] = useState(null);
   const ref = useRef(null);
+  const panelRef = useRef(null);
 
   useEffect(() => {
+    if (!open) return undefined;
     const close = (event) => {
-      if (!ref.current?.contains(event.target)) setOpen(false);
+      if (ref.current?.contains(event.target) || panelRef.current?.contains(event.target)) return;
+      setOpen(false);
     };
     document.addEventListener('pointerdown', close);
     return () => document.removeEventListener('pointerdown', close);
-  }, []);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !ref.current) {
+      setPanelStyle(null);
+      return undefined;
+    }
+    const place = () => {
+      const trigger = ref.current?.querySelector('.more-trigger') || ref.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(300, window.innerWidth - 16);
+      // Anchor under the ⋯ button (right-aligned) so it feels attached
+      let left = rect.right - width;
+      left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+      const gap = 6;
+      const panelHeight = panelRef.current?.offsetHeight || 280;
+      let top = rect.bottom + gap;
+      let placement = 'below';
+      if (top + panelHeight > window.innerHeight - 8) {
+        top = Math.max(8, rect.top - panelHeight - gap);
+        placement = 'above';
+      }
+      // Caret points at center of trigger
+      const caretLeft = Math.min(width - 22, Math.max(18, rect.left + rect.width / 2 - left - 8));
+      setPanelStyle({
+        position: 'fixed',
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        zIndex: 100000,
+        right: 'auto',
+        bottom: 'auto',
+        ['--caret-left']: `${caretLeft}px`,
+        ['--menu-placement']: placement,
+      });
+    };
+    place();
+    const raf = requestAnimationFrame(place);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, actions]);
+
+  const panel = open ? (
+    <div
+      className={`action-menu-panel glass action-menu-panel-portal${panelStyle?.['--menu-placement'] === 'above' ? ' place-above' : ' place-below'}`}
+      ref={panelRef}
+      style={panelStyle || { position: 'fixed', left: -9999, top: 0, opacity: 0, pointerEvents: 'none' }}
+      role="menu"
+    >
+      {actions.map((action) => {
+        const Icon = action.icon;
+        return (
+          <button
+            key={action.label}
+            type="button"
+            role="menuitem"
+            className={action.danger ? 'danger-action' : ''}
+            disabled={action.disabled}
+            onClick={() => {
+              action.onClick();
+              setOpen(false);
+            }}
+          >
+            <span className="action-menu-icon"><Icon size={16} /></span>
+            <span className="action-menu-copy">
+              <strong>{action.label}</strong>
+              {action.detail && <small>{action.detail}</small>}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   return (
-    <div className="action-menu" ref={ref}>
-      <button className="more-trigger" type="button" onClick={() => setOpen((value) => !value)}><MoreHorizontal size={18} /> More</button>
-      {open && (
-        <div className="action-menu-panel glass">
-          {actions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <button
-                key={action.label}
-                type="button"
-                className={action.danger ? 'danger-action' : ''}
-                disabled={action.disabled}
-                onClick={() => {
-                  action.onClick();
-                  setOpen(false);
-                }}
-              >
-                <Icon size={15} />
-                <span><strong>{action.label}</strong>{action.detail && <small>{action.detail}</small>}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+    <div className={`action-menu${compact ? ' action-menu-compact' : ''}${open ? ' is-open' : ''}`} ref={ref}>
+      <button
+        className="more-trigger"
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-label="More actions"
+        aria-expanded={open}
+      >
+        <MoreHorizontal size={18} />
+        {!compact && <span>More</span>}
+      </button>
+      {typeof document !== 'undefined' && panel ? createPortal(panel, document.body) : null}
     </div>
   );
 }
 
-function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate, onArtifact }) {
+function ChatWindow({ session, isTyping, profile, onPrompt, onCopy, onDelete, onEdit, onRegenerate, onArtifact, onOpenLab }) {
   const endRef = useRef(null);
   const lastAssistantId = [...session.messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())?.id;
   const hasActiveAssistant = session.messages[session.messages.length - 1]?.role === 'assistant';
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [session.messages, isTyping]);
   return (
     <div className="chat-window">
-      {!session.messages.length ? (session.mode === 'coding' ? <CodingStartScreen onPrompt={onPrompt} /> : session.mode === 'plan' ? <PlanStartScreen onPrompt={onPrompt} /> : <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} />) : (
+      {!session.messages.length ? (
+        session.mode === 'coding' ? <CodingStartScreen onPrompt={onPrompt} onOpenLab={onOpenLab} />
+          : session.mode === 'plan' ? <PlanStartScreen onPrompt={onPrompt} />
+            : <WelcomeScreen mode={session.mode} profile={profile} onPrompt={onPrompt} />
+      ) : (
         <div className="chat-thread">
           {session.messages.map((message) => (
             <MessageBubble key={message.id} message={message} onCopy={onCopy} onDelete={onDelete} onEdit={onEdit} onRegenerate={onRegenerate} onArtifact={onArtifact} canRegenerate={!isTyping && message.id === lastAssistantId} />
@@ -1160,45 +1416,147 @@ function PlanStartScreen({ onPrompt }) {
   );
 }
 
-function CodingStartScreen({ onPrompt }) {
+function CodingStartScreen({ onPrompt, onOpenLab }) {
   const actions = [
-    ['Debug / Fix', 'Tempel error atau stack trace. Pluto cari root cause dan beri patch kecil.', 'Debug error ini. Cari root cause, jelaskan singkat, lalu berikan patch minimal.'],
-    ['Review Diff', 'Paste perubahan kode. Pluto cari bug, regresi, security risk, dan missing tests.', 'Review diff ini dengan fokus bug, regresi, security, dan missing tests.'],
-    ['Build Component', 'Ubah brief UI jadi komponen React yang clean dan siap edit.', 'Buat komponen React modern berdasarkan brief ini.'],
+    { id: 'debug', title: 'Debug / Fix', short: 'Debug', detail: 'Tempel error atau stack trace. Pluto cari root cause dan beri patch kecil.', prompt: 'Debug error ini. Cari root cause, jelaskan singkat, lalu berikan patch minimal.' },
+    { id: 'review', title: 'Review Diff', short: 'Review', detail: 'Paste perubahan kode. Pluto cari bug, regresi, security risk, dan missing tests.', prompt: 'Review diff ini dengan fokus bug, regresi, security, dan missing tests.' },
+    { id: 'build', title: 'Build Component', short: 'Build', detail: 'Ubah brief UI jadi komponen React yang clean dan siap edit.', prompt: 'Buat komponen React modern berdasarkan brief ini.' },
   ];
   return (
     <section className="coding-start">
       <div className="coding-hero glass code-welcome">
-        <span>Pluto Code</span>
+        <div className="coding-hero-head">
+          <span>Pluto Code</span>
+          {onOpenLab && (
+            <button type="button" className="coding-lab-chip" onClick={onOpenLab}>
+              <Code2 size={14} /> Code Lab
+            </button>
+          )}
+        </div>
         <h1>Kode lebih tenang.</h1>
         <p>Tempel error, diff, atau brief komponen. Pluto bantu cari root cause, refactor, review, dan simpan output sebagai artifact.</p>
         <div className="coding-focus-card">
-          <div><Code2 size={18} /><strong>Mulai dari masalah nyata</strong><span>Error, diff, atau brief UI paling berguna untuk mode ini.</span></div>
-          <button onClick={() => onPrompt(actions[0][2])}>Debug sekarang</button>
+          <div className="coding-focus-copy">
+            <Code2 size={18} />
+            <div>
+              <strong>Mulai dari masalah nyata</strong>
+              <span>Error, diff, atau brief UI paling berguna untuk mode ini.</span>
+            </div>
+          </div>
+          <button type="button" onClick={() => onPrompt(actions[0].prompt)}>Debug sekarang</button>
         </div>
       </div>
-      <div className="coding-action-strip">
-        {actions.slice(1).map(([title, detail, prompt]) => <button key={title} onClick={() => onPrompt(prompt)}><strong>{title}</strong><span>{detail}</span></button>)}
+      <div className="coding-action-strip" role="list">
+        {actions.map((action) => (
+          <button key={action.id} type="button" role="listitem" onClick={() => onPrompt(action.prompt)}>
+            <strong className="coding-action-full">{action.title}</strong>
+            <strong className="coding-action-short">{action.short}</strong>
+            <span>{action.detail}</span>
+          </button>
+        ))}
       </div>
     </section>
   );
 }
 
 function WelcomeScreen({ mode, profile, onPrompt }) {
-  const name = profile?.displayName?.trim();
-  const role = profile?.role ? ` untuk ${profile.role}` : '';
-  const copy = {
-    chat: [name ? `Siang, ${name}` : 'Mulai dari mana hari ini?', `Chat, coding, dokumen, gambar, dan canvas dalam satu workspace Pluto${role}.`, ['Buat rencana produk', 'Review kode saya', 'Buat dokumen profesional', 'Bangun canvas ide', 'Prompt gambar premium']],
-    plan: ['Rancang langkah kerja', 'Mode agentik untuk mengubah ide jadi outcome, milestone, task, risiko, dan next step.', ['Buat launch plan produk', 'Susun sprint 1 minggu', 'Pecah ide app jadi MVP', 'Bantu ambil keputusan ini']],
-    coding: ['Bangun kode lebih cepat', 'Tulis, debug, refactor, dan simpan artifact kode di workspace.', ['Buat komponen React', 'Debug kode JavaScript saya', 'Refactor fungsi ini', 'Buat struktur API backend']],
-    image: ['Ciptakan gambar dari imajinasi', 'Studio visual untuk prompt, style, rasio, dan galeri hasil.', ['Planet Pluto luxury cinematic', 'Logo SaaS luar angkasa', 'Poster nebula violet', 'Karakter astronot elegan']],
-    file: ['Artifact Library', 'Penyimpanan output Pluto: dokumen, plan, kode, project, file upload, dan gambar.', ['Buat plan MVP', 'Buat project landing page', 'Buat dokumen brief', 'Review artifact terakhir']],
-  }[mode] || ['Pluto', 'Asisten AI luar angkasa untuk chat, coding, gambar, dan ide tanpa batas.', quickPrompts];
+  const rawName = profile?.displayName?.trim() || '';
+  const name = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : '';
+  const hour = new Date().getHours();
+  const greetWord = hour < 11 ? 'Pagi' : hour < 15 ? 'Siang' : hour < 18 ? 'Sore' : 'Malam';
+  const role = profile?.role?.trim();
+
+  const screens = {
+    chat: {
+      eyebrow: 'Pluto Workspace',
+      title: name ? null : 'Mulai dari mana?',
+      greet: name ? greetWord : null,
+      name: name || null,
+      subtitle: role
+        ? `Chat, coding, dokumen, dan canvas — disiapkan untuk ${role}.`
+        : 'Chat, coding, dokumen, dan canvas dalam satu ruang kerja AI.',
+      chips: [
+        { label: 'Rencana', prompt: 'Buat rencana produk' },
+        { label: 'Review kode', prompt: 'Review kode saya' },
+        { label: 'Dokumen', prompt: 'Buat dokumen profesional' },
+        { label: 'Canvas', prompt: 'Bangun canvas ide' },
+        { label: 'Gambar', prompt: 'Prompt gambar premium' },
+      ],
+    },
+    plan: {
+      eyebrow: 'Mode Plan',
+      title: 'Rancang langkah kerja',
+      subtitle: 'Ubah ide jadi milestone, task, dan next step yang jelas.',
+      chips: [
+        { label: 'Launch plan', prompt: 'Buat launch plan produk' },
+        { label: 'Sprint 1 minggu', prompt: 'Susun sprint 1 minggu' },
+        { label: 'Ide ke MVP', prompt: 'Pecah ide app jadi MVP' },
+        { label: 'Ambil keputusan', prompt: 'Bantu ambil keputusan ini' },
+      ],
+    },
+    coding: {
+      eyebrow: 'Mode Coding',
+      title: 'Bangun kode lebih cepat',
+      subtitle: 'Tulis, debug, refactor, lalu simpan artifact di workspace.',
+      chips: [
+        { label: 'Komponen React', prompt: 'Buat komponen React' },
+        { label: 'Debug JS', prompt: 'Debug kode JavaScript saya' },
+        { label: 'Refactor', prompt: 'Refactor fungsi ini' },
+        { label: 'API backend', prompt: 'Buat struktur API backend' },
+      ],
+    },
+    image: {
+      eyebrow: 'Mode Image',
+      title: 'Ciptakan dari imajinasi',
+      subtitle: 'Prompt, style, dan galeri visual dalam satu studio.',
+      chips: [
+        { label: 'Planet cinematic', prompt: 'Planet Pluto luxury cinematic' },
+        { label: 'Logo SaaS', prompt: 'Logo SaaS luar angkasa' },
+        { label: 'Poster nebula', prompt: 'Poster nebula violet' },
+        { label: 'Astronot', prompt: 'Karakter astronot elegan' },
+      ],
+    },
+    file: {
+      eyebrow: 'Artifact Library',
+      title: 'Semua output tersimpan',
+      subtitle: 'Dokumen, plan, kode, project, dan gambar dari Pluto.',
+      chips: [
+        { label: 'Plan MVP', prompt: 'Buat plan MVP' },
+        { label: 'Landing page', prompt: 'Buat project landing page' },
+        { label: 'Dokumen brief', prompt: 'Buat dokumen brief' },
+        { label: 'Review terakhir', prompt: 'Review artifact terakhir' },
+      ],
+    },
+  };
+
+  const screen = screens[mode] || {
+    eyebrow: 'Pluto',
+    title: 'Asisten AI workspace',
+    subtitle: 'Chat, coding, gambar, dan ide tanpa batas.',
+    chips: (quickPrompts || []).map((prompt) => ({ label: prompt, prompt })),
+  };
+
   return (
     <section className="welcome ai-home">
-      <h1>{copy[0]}</h1>
-      <p>{copy[1]}</p>
-      <div className="quick-grid prompt-chips">{copy[2].map((prompt) => <button key={prompt} onClick={() => onPrompt(prompt)}>{prompt}</button>)}</div>
+      <span className="ai-home-eyebrow">{screen.eyebrow}</span>
+      <h1 className="ai-home-title">
+        {screen.greet && screen.name ? (
+          <>
+            <span className="ai-home-greet">{screen.greet},</span>
+            <span className="ai-home-name"> {screen.name}</span>
+          </>
+        ) : (
+          screen.title
+        )}
+      </h1>
+      <p className="ai-home-sub">{screen.subtitle}</p>
+      <div className="quick-grid prompt-chips" role="list">
+        {screen.chips.map((chip) => (
+          <button key={chip.prompt} type="button" role="listitem" onClick={() => onPrompt(chip.prompt)}>
+            {chip.label}
+          </button>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1215,7 +1573,7 @@ function MessageBubble({ message, onCopy, onDelete, onEdit, onRegenerate, onArti
         <div className="message-actions">
           {message.role === 'user' && <button onClick={() => onEdit(message.id)}><PenLine size={14} /> Edit</button>}
           {canRegenerate && <button onClick={onRegenerate}><RefreshCw size={14} /> Regenerate</button>}
-          {message.role === 'assistant' && <button onClick={() => onArtifact(message)}><BrainCircuit size={14} /> Turn into Workspace</button>}
+          {message.role === 'assistant' && <button onClick={() => onArtifact(message)}><BrainCircuit size={14} /> Open as Canvas</button>}
           <button onClick={() => onCopy(message.content)}><Copy size={14} /> Copy</button>
           <button onClick={() => onDelete(message.id)}><Trash2 size={14} /> Hapus</button>
         </div>
@@ -1267,31 +1625,37 @@ function Composer({ value, mode, model, imageStyle, disabled, isTyping, onChange
   const textRef = useRef(null);
   useEffect(() => {
     if (!textRef.current) return;
+    // Empty state keeps CSS min-height so placeholder stays optically balanced
+    if (!value) {
+      textRef.current.style.height = '';
+      return;
+    }
     textRef.current.style.height = 'auto';
     textRef.current.style.height = `${Math.min(textRef.current.scrollHeight, 180)}px`;
   }, [value]);
   const placeholder = {
-    chat: 'Tanyakan apa saja',
-    plan: 'Tulis tujuan besar, Pluto pecah jadi plan bertahap...',
-    coding: 'Tulis prompt kode...',
-    image: 'Deskripsikan gambar yang ingin dibuat...',
-    file: 'Tanyakan sesuatu dari file atau konteks...',
-  }[mode] || 'Tanyakan apa saja...';
+    chat: 'Tanyakan apa saja…',
+    plan: 'Tulis tujuan besar…',
+    coding: 'Tulis prompt kode…',
+    image: 'Deskripsikan gambar…',
+    file: 'Tanya dari file…',
+  }[mode] || 'Tanyakan apa saja…';
 
   return (
-      <div className="composer glass">
+      <div className={`composer glass${value.trim() ? ' is-filled' : ' is-empty'}`}>
       <div className="composer-row">
-        <button className="icon" onClick={onAttach}><Plus /></button>
-        <textarea ref={textRef} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend(); } }} />
-        <ModelSelector value={model} onChange={onModel} className="composer-model" />
-        <button className="icon" onClick={onVoice}><Mic /></button>
-        {isTyping ? <button className="send stop" onClick={onStop}><X size={18} /></button> : <button className="send" disabled={!value.trim() || disabled} onClick={onSend}><Send size={18} /></button>}
+        <button className="icon" onClick={onAttach} aria-label="Lampirkan"><Plus /></button>
+        <textarea ref={textRef} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} rows={1} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend(); } }} />
+        <ModelSelector value={model} onChange={onModel} className="composer-model" fixedMenu />
+        <button className="icon" onClick={onVoice} aria-label="Suara"><Mic /></button>
+        {isTyping ? <button className="send stop" onClick={onStop} aria-label="Hentikan"><X size={18} /></button> : <button className="send" disabled={!value.trim() || disabled} onClick={onSend} aria-label="Kirim"><Send size={18} /></button>}
       </div>
     </div>
   );
 }
 
-function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave, onOpen, onComposer, onSend, onStop, onAttach, onVoice }) {
+function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave, onOpen, onMenu, onComposer, onSend, onStop, onAttach, onVoice }) {
+  const isMobile = useIsMobile();
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pendingProjectPatch, setPendingProjectPatch] = useState(null);
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
@@ -1304,9 +1668,11 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
     if (activeCanvas?.type === 'Project') setPreviewOpen(true);
   }, [activeCanvas?.id, activeCanvas?.type]);
 
+  // Desktop: open AI dock when generating. Mobile: keep closed so editor stays usable.
   useEffect(() => {
-    if (isTyping || lastAssistant) setAiDrawerOpen(true);
-  }, [isTyping, lastAssistant?.id]);
+    if (isMobile) return;
+    if (isTyping) setAiDrawerOpen(true);
+  }, [isTyping, isMobile]);
 
   const saveCanvases = (nextCanvases, activeCanvasId = activeCanvas.id) => {
     onUpdate({ canvases: nextCanvases, activeCanvasId });
@@ -1467,6 +1833,22 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
   const changeCanvasType = (type) => updateCanvas(type === 'Project' ? { ...createCanvas('Project'), id: activeCanvas.id, createdAt: activeCanvas.createdAt, versions: activeCanvas.versions || [] } : { type, language: type === 'Code' ? 'javascript' : 'markdown' });
 
   const moreActions = [
+    ...(isMobile
+      ? [
+          {
+            label: previewOpen ? 'Edit mode' : 'Preview',
+            detail: previewOpen ? 'Kembali ke editor' : 'Lihat preview canvas',
+            icon: FileText,
+            onClick: () => setPreviewOpen((value) => !value),
+          },
+          ...downloadOptions.map((option) => ({
+            label: option.label || option.name,
+            detail: option.detail || 'Download',
+            icon: Download,
+            onClick: () => handleDownloadOption(option.name),
+          })),
+        ]
+      : []),
     { label: 'Diff', detail: 'Lihat perubahan terakhir', icon: Code2, disabled: !activeCanvas.versions?.length, onClick: () => setDiffOpen(true) },
     { label: 'New Canvas', detail: 'Buat canvas kosong baru', icon: Plus, onClick: () => addCanvas() },
     { label: 'Delete Canvas', detail: canvases.length <= 1 ? 'Kosongkan isi canvas ini' : 'Hapus canvas aktif', icon: Trash2, danger: true, onClick: deleteCanvas },
@@ -1491,28 +1873,115 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
   };
 
   if (!open) {
-    return <WorkspaceHome canvases={canvases} onCreate={addCanvas} onOpenCanvas={(id) => { onUpdate({ activeCanvasId: id }); onOpen(true); }} onDuplicate={duplicateCanvas} onDelete={deleteCanvasById} />;
+    return (
+      <WorkspaceHome
+        canvases={canvases}
+        onMenu={onMenu}
+        onCreate={addCanvas}
+        onOpenCanvas={(id) => { onUpdate({ activeCanvasId: id }); onOpen(true); }}
+        onDuplicate={duplicateCanvas}
+        onDelete={deleteCanvasById}
+      />
+    );
   }
 
+  const isUnsaved = !(activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt);
+
   return (
-    <section className={`canvas-stage ${aiDrawerOpen ? 'ai-open' : ''}`}>
+    <section className={`canvas-stage ${aiDrawerOpen ? 'ai-open' : ''}${isMobile ? ' canvas-stage-mobile' : ''}`}>
       <div className="canvas-stage-toolbar glass">
-        <div className="canvas-title-stack">
-          <button className="canvas-back" onClick={() => onOpen(false)}>Back</button>
-          <div>
-            <input value={activeCanvas.title} onChange={(event) => updateCanvas({ title: event.target.value || 'Untitled Canvas' })} placeholder="Untitled Canvas" />
-            <span className={activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt ? 'saved' : 'unsaved'}>{activeCanvas.savedAt && activeCanvas.updatedAt <= activeCanvas.savedAt ? `Synced ${new Date(activeCanvas.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Unsaved changes'}</span>
-          </div>
-        </div>
-        <div className="canvas-stage-actions">
-          <CustomSelect value={activeCanvas.type} options={canvasTypes} onChange={changeCanvasType} />
-          {activeCanvas.type === 'Code' && <CustomSelect value={activeCanvas.language || 'javascript'} options={canvasLanguages} onChange={(language) => updateCanvas({ language })} />}
-          <button onClick={() => setPreviewOpen((value) => !value)}><FileText size={15} /> {previewOpen ? 'Edit' : 'Preview'}</button>
-          <button onClick={saveCanvas}><Check size={15} /> Save</button>
-          <button onClick={() => setAiDrawerOpen((value) => !value)}><Sparkles size={15} /> Ask AI</button>
-          <CustomSelect value="Export" className="download-select" options={downloadOptions} onChange={handleDownloadOption} />
-          <ActionMenu actions={moreActions} />
-        </div>
+        {isMobile ? (
+          <>
+            <div className="canvas-mobile-top">
+              {onMenu && (
+                <button type="button" className="icon canvas-menu-btn" onClick={onMenu} aria-label="Menu">
+                  <Menu size={18} />
+                </button>
+              )}
+              <button type="button" className="canvas-back" onClick={() => onOpen(false)}>Back</button>
+              <div className="canvas-title-copy">
+                <input
+                  value={activeCanvas.title}
+                  onChange={(event) => updateCanvas({ title: event.target.value || 'Untitled Canvas' })}
+                  placeholder="Untitled Canvas"
+                  title={activeCanvas.title}
+                />
+                <span className={isUnsaved ? 'unsaved' : 'saved'}>
+                  {isUnsaved ? 'Unsaved' : `Synced ${new Date(activeCanvas.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                </span>
+              </div>
+            </div>
+            <div className={`canvas-mobile-actions${activeCanvas.type === 'Code' ? ' has-lang' : ''}`}>
+              <CustomSelect
+                className="canvas-type-select portal-menu"
+                value={activeCanvas.type}
+                options={canvasTypes}
+                labels={canvasTypeShortLabels}
+                menuLabels={canvasTypeLabels}
+                menuWidth={220}
+                onChange={changeCanvasType}
+              />
+              {activeCanvas.type === 'Code' && (
+                <CustomSelect
+                  className="canvas-lang-select portal-menu"
+                  value={activeCanvas.language || 'javascript'}
+                  options={canvasLanguages}
+                  labels={canvasLangShortLabels}
+                  menuLabels={canvasLangLabels}
+                  menuWidth={200}
+                  onChange={(language) => updateCanvas({ language })}
+                />
+              )}
+              <button
+                type="button"
+                className={`canvas-pill-btn canvas-pill-ai${aiDrawerOpen ? ' active' : ''}`}
+                onClick={() => setAiDrawerOpen((value) => !value)}
+                aria-label="Ask AI"
+              >
+                <Sparkles size={15} />
+                <span>AI</span>
+              </button>
+              <button type="button" className="canvas-pill-btn canvas-pill-save" onClick={saveCanvas} aria-label="Save">
+                <Check size={15} />
+                <span>Save</span>
+              </button>
+              <ActionMenu actions={moreActions} compact />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="canvas-title-stack">
+              {onMenu && (
+                <button type="button" className="icon canvas-menu-btn" onClick={onMenu} aria-label="Menu">
+                  <Menu size={18} />
+                </button>
+              )}
+              <button type="button" className="canvas-back" onClick={() => onOpen(false)}>Back</button>
+              <div className="canvas-title-copy">
+                <input value={activeCanvas.title} onChange={(event) => updateCanvas({ title: event.target.value || 'Untitled Canvas' })} placeholder="Untitled Canvas" />
+                <span className={isUnsaved ? 'unsaved' : 'saved'}>
+                  {isUnsaved ? 'Unsaved changes' : `Synced ${new Date(activeCanvas.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                </span>
+              </div>
+            </div>
+            <div className="canvas-stage-actions">
+              <CustomSelect value={activeCanvas.type} options={canvasTypes} labels={canvasTypeLabels} onChange={changeCanvasType} />
+              {activeCanvas.type === 'Code' && (
+                <CustomSelect
+                  value={activeCanvas.language || 'javascript'}
+                  options={canvasLanguages}
+                  labels={canvasLangLabels}
+                  onChange={(language) => updateCanvas({ language })}
+                />
+              )}
+              <button type="button" onClick={() => setPreviewOpen((value) => !value)}><FileText size={15} /> {previewOpen ? 'Edit' : 'Preview'}</button>
+              <button type="button" onClick={saveCanvas}><Check size={15} /> Save</button>
+              <button type="button" onClick={() => setAiDrawerOpen((value) => !value)}><Sparkles size={15} /> Ask AI</button>
+              <CustomSelect value="Export" className="download-select" options={downloadOptions} onChange={handleDownloadOption} />
+              <ActionMenu actions={moreActions} />
+            </div>
+          </>
+        )}
       </div>
       <div className="canvas-work-area">
         <div className={`canvas-sheet glass ${activeCanvas.type === 'Project' ? 'project-sheet' : ''}`}>
@@ -1530,8 +1999,12 @@ function CanvasStage({ session, composer, isTyping, open, onUpdate, onCloudSave,
             />
           )}
         </div>
+        {isMobile && aiDrawerOpen && (
+          <button type="button" className="canvas-ai-backdrop" aria-label="Tutup AI panel" onClick={() => setAiDrawerOpen(false)} />
+        )}
         <CanvasAIDock
           open={aiDrawerOpen}
+          mobile={isMobile}
           assistant={lastAssistant}
           composer={composer}
           canvas={activeCanvas}
@@ -1675,12 +2148,32 @@ function buildProjectPreview(files) {
     .replace('</body>', `<script>${js}<\/script></body>`);
 }
 
+/** When AI finishes a reply, should we jump into the canvas editor? */
+function shouldAutoOpenCanvas(requestMode, sessionMode) {
+  // Coding / image / file stay in their own views — never auto-jump to Workspace.
+  if (sessionMode === 'coding' || sessionMode === 'image' || sessionMode === 'file') return false;
+  if (requestMode === 'coding' || requestMode === 'image') return false;
+  // Plan intentionally creates a plan canvas. Workspace already is canvas.
+  return requestMode === 'plan' || requestMode === 'workspace' || sessionMode === 'workspace' || sessionMode === 'plan';
+}
+
+/**
+ * Auto artifact policy:
+ * - coding/image/file/chat: never force mode=workspace (code stays in chat).
+ * - plan: create Plan canvas and switch to workspace.
+ * - workspace: attach new/updated canvas while staying in workspace.
+ */
 function buildSmartArtifactPatch({ session, response, prompt, mode }) {
+  if (mode === 'coding' || mode === 'image' || mode === 'file') return {};
+
   const artifact = buildSmartArtifactFromResponse(response, prompt, mode);
-  if (artifact && artifact.kind !== 'project' && artifact.kind !== 'code' && mode !== 'plan') return {};
-  if (artifact) {
+  if (!artifact) return {};
+
+  // Chat mode: do not auto-create/switch for code or docs — user uses "Open as Canvas".
+  if (mode === 'chat') return {};
+
+  if (mode === 'workspace') {
     const patch = {
-      mode: 'workspace',
       activeCanvasId: artifact.canvas.id,
       canvases: [artifact.canvas, ...(session.canvases || [])],
     };
@@ -1691,7 +2184,27 @@ function buildSmartArtifactPatch({ session, response, prompt, mode }) {
     }
     return patch;
   }
-  if (mode === 'coding' || looksLikeCode(response) || looksLikeCodeRequest(prompt)) return { mode: 'coding' };
+
+  if (mode === 'plan') {
+    const planArtifact = artifact.kind === 'plan'
+      ? artifact
+      : {
+          kind: 'plan',
+          canvas: {
+            ...createCanvas('Plan'),
+            title: makeArtifactTitle(prompt, 'Plan'),
+            content: extractCanvasPayload(response, 'Plan'),
+            savedAt: null,
+            updatedAt: Date.now(),
+          },
+        };
+    return {
+      mode: 'workspace',
+      activeCanvasId: planArtifact.canvas.id,
+      canvases: [planArtifact.canvas, ...(session.canvases || [])],
+    };
+  }
+
   return {};
 }
 
@@ -2037,43 +2550,65 @@ function extractCanvasPayload(text, type) {
   return text.replace(/```(?:\w+)?\n([\s\S]*?)```/g, '$1').trim();
 }
 
-function CanvasAIDock({ open, assistant, composer, canvas, isTyping, hasSelection, canUndo, isProject, selection, versions, onClose, onUndo, onReplace, onAppend, onSelection, onNewCanvas, onRestore, onChange, onSend, onStop, onAttach, onVoice }) {
+function CanvasAIDock({ open, mobile = false, assistant, composer, canvas, isTyping, hasSelection, canUndo, isProject, selection, versions, onClose, onUndo, onReplace, onAppend, onSelection, onNewCanvas, onRestore, onChange, onSend, onStop, onAttach, onVoice }) {
   if (!open) return null;
   return (
-    <aside className="canvas-ai-dock glass">
+    <aside className={`canvas-ai-dock glass${mobile ? ' canvas-ai-dock-mobile' : ''}`}>
+      {mobile && <div className="dock-sheet-handle" aria-hidden="true" />}
       <div className="dock-head">
-        <div><span>AI Assistant</span><strong>{isTyping ? 'Sedang bekerja...' : 'Edit canvas dengan AI'}</strong></div>
-        <button onClick={onClose}><X size={15} /></button>
-      </div>
-      <div className="dock-composer">
-        <span>Using {canvas?.title || 'canvas'}</span>
-        {selection?.text && <div className="selection-chip">Selection aktif{selection.filePath ? ` · ${selection.filePath}` : ''}: {selection.text.slice(0, 90)}</div>}
         <div>
-          <button className="icon" onClick={onAttach}><Paperclip /></button>
-          <textarea value={composer} onChange={(event) => onChange(event.target.value)} placeholder="Minta AI menulis, merapikan, atau mengubah canvas ini..." onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onSend(); } }} />
-          <button className="icon" onClick={onVoice}><Mic /></button>
-          {isTyping ? <button className="send stop" onClick={onStop}><X size={18} /></button> : <button className="send" disabled={!composer.trim()} onClick={onSend}><Send size={18} /></button>}
+          <span>AI Assistant</span>
+          <strong>{isTyping ? 'Sedang bekerja...' : 'Edit canvas dengan AI'}</strong>
         </div>
+        <button type="button" onClick={onClose} aria-label="Tutup"><X size={15} /></button>
       </div>
-      <div className={`dock-body ${isTyping ? 'generating' : ''}`}>
-        {assistant ? <MarkdownText text={assistant.content} /> : <p>AI output akan muncul di sini setelah kamu mengirim instruksi.</p>}
-        {isTyping && <div className="ai-generating"><span /><span /><span /> AI sedang generate...</div>}
+      <div className="dock-scroll">
+        <div className="dock-composer">
+          <span className="dock-context">Using {canvas?.title || 'canvas'}</span>
+          {selection?.text && (
+            <div className="selection-chip">
+              Selection aktif{selection.filePath ? ` · ${selection.filePath}` : ''}: {selection.text.slice(0, 90)}
+            </div>
+          )}
+          <div className="dock-composer-row">
+            <button type="button" className="icon" onClick={onAttach} aria-label="Lampirkan"><Paperclip size={16} /></button>
+            <textarea
+              value={composer}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder="Minta AI menulis atau mengubah canvas..."
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  onSend();
+                }
+              }}
+            />
+            <button type="button" className="icon" onClick={onVoice} aria-label="Suara"><Mic size={16} /></button>
+            {isTyping
+              ? <button type="button" className="send stop" onClick={onStop} aria-label="Stop"><X size={18} /></button>
+              : <button type="button" className="send" disabled={!composer.trim()} onClick={onSend} aria-label="Kirim"><Send size={18} /></button>}
+          </div>
+        </div>
+        <div className={`dock-body ${isTyping ? 'generating' : ''}`}>
+          {assistant ? <MarkdownText text={assistant.content} /> : <p>AI output akan muncul di sini setelah kamu mengirim instruksi.</p>}
+          {isTyping && <div className="ai-generating"><span /><span /><span /> AI sedang generate...</div>}
+        </div>
+        {!mobile && <CanvasHistory versions={versions} onRestore={onRestore} />}
       </div>
       {assistant && (
         <div className="dock-actions">
-          <button onClick={onAppend}>{isProject ? 'Preview Append' : 'Insert'}</button>
-          <button onClick={onReplace}>{isProject ? 'Preview Apply' : 'Replace'}</button>
-          <button onClick={onSelection} disabled={!hasSelection}>Apply Selection</button>
-          <button onClick={onNewCanvas}>New Canvas</button>
-          <button onClick={onUndo} disabled={!canUndo}>Undo</button>
+          <button type="button" onClick={onAppend}>{isProject ? 'Preview Append' : 'Insert'}</button>
+          <button type="button" onClick={onReplace}>{isProject ? 'Preview Apply' : 'Replace'}</button>
+          {!mobile && <button type="button" onClick={onSelection} disabled={!hasSelection}>Apply Selection</button>}
+          {!mobile && <button type="button" onClick={onNewCanvas}>New Canvas</button>}
+          <button type="button" onClick={onUndo} disabled={!canUndo}>Undo</button>
         </div>
       )}
-      <CanvasHistory versions={versions} onRestore={onRestore} />
     </aside>
   );
 }
 
-function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete }) {
+function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete, onMenu }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
   const [newType, setNewType] = useState('Document');
@@ -2098,12 +2633,19 @@ function WorkspaceHome({ canvases, onCreate, onOpenCanvas, onDuplicate, onDelete
   return (
     <section className="workspace-home">
       <div className="workspace-hero glass">
-        <span>AI Workspace</span>
+        <div className="workspace-hero-top">
+          {onMenu && (
+            <button type="button" className="icon canvas-menu-btn" onClick={onMenu} aria-label="Menu">
+              <Menu size={18} />
+            </button>
+          )}
+          <span className="workspace-hero-kicker">AI Workspace</span>
+        </div>
         <h1>Bangun ide di canvas Pluto</h1>
         <p>Pilih canvas yang sudah ada atau buat ruang kerja baru untuk dokumen, kode, dan rencana. Chat AI akan jadi asisten kerja di atas canvas.</p>
         <div className="workspace-hero-actions">
-          <button onClick={() => onCreate(newType, templateId)}><Plus size={17} /> Buat Canvas</button>
-          <button onClick={() => canvases[0] && onOpenCanvas(canvases[0].id)}>Buka Terakhir</button>
+          <button type="button" onClick={() => onCreate(newType, templateId)}><Plus size={17} /> Buat Canvas</button>
+          <button type="button" onClick={() => canvases[0] && onOpenCanvas(canvases[0].id)}>Buka Terakhir</button>
         </div>
         <div className="workspace-create-panel">
           <div><span>Canvas type</span><CustomSelect value={newType} options={canvasTypes} onChange={setNewType} /></div>
@@ -2274,8 +2816,18 @@ function WorkspacePanel({ session, onUpdate, onPrompt, onClose }) {
   return <ChatWorkspace session={session} onUpdate={onUpdate} onClose={onClose} />;
 }
 
-function WorkspaceTitle({ children, onClose }) {
-  return <div className="workspace-title"><h2>{children}</h2><button onClick={onClose}><X size={16} /></button></div>;
+function WorkspaceTitle({ children, onClose, onMenu, fullPage = false }) {
+  return (
+    <div className={`workspace-title${fullPage ? ' workspace-title-fullpage' : ''}`}>
+      {fullPage && onMenu && (
+        <button type="button" className="code-lab-menu" onClick={onMenu} aria-label="Menu">
+          <Menu size={18} />
+        </button>
+      )}
+      <h2>{children}</h2>
+      <button type="button" onClick={onClose} aria-label="Tutup"><X size={16} /></button>
+    </div>
+  );
 }
 
 function ChatWorkspace({ session, onUpdate, onClose }) {
@@ -2291,7 +2843,7 @@ function ChatWorkspace({ session, onUpdate, onClose }) {
   );
 }
 
-function CodingWorkspace({ session, onUpdate, onPrompt, onClose }) {
+function CodingWorkspace({ session, onUpdate, onPrompt, onClose, onMenu, fullPage = false }) {
   const codeContext = session.codeContext || { language: 'javascript', snippet: '' };
   const files = session.pseudoFiles?.length ? session.pseudoFiles : [{ id: 'main', name: 'pluto-output.js', content: session.codeOutput || 'Belum ada artifact kode.' }];
   const updateContext = (patch) => onUpdate({ codeContext: { ...codeContext, ...patch } });
@@ -2308,9 +2860,17 @@ function CodingWorkspace({ session, onUpdate, onPrompt, onClose }) {
     onPrompt(prompt);
   };
   return (
-    <aside className="workspace glass workspace-coding">
-      <WorkspaceTitle onClose={onClose}>Code Lab</WorkspaceTitle>
-      <div className="code-lab-hero"><span>Snippet Context</span><strong>Debug cepat tanpa buka canvas.</strong><p>Workspace menyimpan canvas/project. Code Lab fokus ke snippet, stack trace, review, dan output teknis.</p></div>
+    <aside className={`workspace workspace-coding${fullPage ? ' code-lab-fullpage' : ' glass'}`}>
+      <WorkspaceTitle fullPage={fullPage} onMenu={onMenu} onClose={onClose}>Code Lab</WorkspaceTitle>
+      <div className="code-lab-hero">
+        <span>Snippet Context</span>
+        <strong>{fullPage ? 'Debug & review di Code Lab.' : 'Debug cepat tanpa buka canvas.'}</strong>
+        <p>
+          {fullPage
+            ? 'Tempel snippet, stack trace, atau diff. Jalankan Debug / Refactor / Review, lalu kembali ke chat coding.'
+            : 'Workspace menyimpan canvas/project. Code Lab fokus ke snippet, stack trace, review, dan output teknis.'}
+        </p>
+      </div>
       <div className="workspace-card code-context-card">
         <div className="code-context-head"><span>Language</span><CustomSelect value={codeContext.language} options={canvasLanguages} onChange={(language) => updateContext({ language })} /></div>
         <textarea value={codeContext.snippet || ''} onChange={(event) => updateContext({ snippet: event.target.value })} placeholder="Tempel snippet, stack trace, atau diff di sini..." />
@@ -2322,7 +2882,7 @@ function CodingWorkspace({ session, onUpdate, onPrompt, onClose }) {
           ].map(([id, label]) => <button key={id} onClick={() => sendCodeTask(id)}>{label}</button>)}
         </div>
       </div>
-      <div className="linked-canvas-block"><CanvasBoard session={session} onUpdate={onUpdate} /></div>
+      {!fullPage && <div className="linked-canvas-block"><CanvasBoard session={session} onUpdate={onUpdate} /></div>}
       <div className="workspace-card code-artifacts-card"><span>Artifacts</span>{files.map((file) => <div className="pseudo-file" key={file.id || file.name}><Code2 size={15} /><strong>{file.name}</strong></div>)}</div>
       <div className="workspace-card code-artifact"><span>Latest Code Output</span><pre>{session.codeOutput || 'Respons kode Pluto akan muncul di sini setelah kamu bertanya.'}</pre></div>
       <div className="workspace-card"><span>Terminal Mock</span><pre>{session.terminalOutput || '$ npm run build\nBelum ada output. Kirim task coding dulu.'}</pre></div>
