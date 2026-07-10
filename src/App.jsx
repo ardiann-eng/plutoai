@@ -906,14 +906,8 @@ export function App() {
 }
 
 function SpaceBackdrop() {
-  return (
-    <div className="space-backdrop" aria-hidden="true">
-      <div className="pluto-orbit" />
-      <div className="pluto-planet" />
-      <div className="nebula nebula-one" />
-      <div className="nebula nebula-two" />
-    </div>
-  );
+  // Intentionally minimal — plain chatbot surface, brand color only (no busy nebula clash with logo)
+  return <div className="space-backdrop" aria-hidden="true" />;
 }
 
 function Sidebar(props) {
@@ -928,7 +922,18 @@ function Sidebar(props) {
   return (
     <aside className={`sidebar glass ${drawerOpen ? 'open' : ''} ${collapsed ? 'collapsed' : ''}`}>
       <div className="mobile-close"><button onClick={onClose}><X size={18} /></button></div>
-      <div className="sidebar-top"><div className="brand"><strong>Pluto</strong></div><button className="collapse-btn" onClick={onCollapse}>{collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</button></div>
+      <div className="sidebar-top">
+        <div className={`brand${collapsed ? ' brand-collapsed' : ''}`}>
+          {collapsed ? (
+            <img src="/icon.png" alt="Pluto" className="brand-icon" width={30} height={30} draggable={false} />
+          ) : (
+            <img src="/logo.png" alt="Pluto" className="brand-logo" draggable={false} />
+          )}
+        </div>
+        <button className="collapse-btn" onClick={onCollapse} aria-label={collapsed ? 'Perluas sidebar' : 'Ciutkan sidebar'}>
+          {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+        </button>
+      </div>
       <button className="new-chat" onClick={onNew}><Plus size={18} /> <span>Chat Baru</span></button>
       <input className="history-search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Cari riwayat..." />
       <nav className="feature-menu">
@@ -1017,6 +1022,7 @@ function OnboardingModal({ open, profile, onComplete, onSkip }) {
     <div className="modal-backdrop onboarding-backdrop">
       <section className="onboarding-card glass">
         <button className="modal-close" onClick={onSkip}><X /></button>
+        <div className="auth-brand"><img src="/logo.png" alt="Pluto" className="brand-logo" draggable={false} /></div>
         {step === 0 && <OnboardingStep eyebrow="Selamat datang" title="Halo, aku Pluto" text="AI workspace untuk chat, dokumen, proposal, coding, file, dan ide kreatif. Mau mulai dari mana hari ini?" options={goals} value={form.goal} onPick={(goal) => setForm({ ...form, goal })} />}
         {step === 1 && <OnboardingStep eyebrow="Personalisasi" title="Kamu tahu Pluto dari mana?" text="Ini bantu kami memahami channel yang paling berguna tanpa mengganggu pengalamanmu." options={sources} value={form.source} onPick={(source) => setForm({ ...form, source })} />}
         {step === 2 && (
@@ -3082,6 +3088,7 @@ function AuthModal({ open, mode, onMode, onSubmit, onGoogle, onGuest, onClose })
     <div className="modal-backdrop auth-backdrop">
       <section className="auth-modal glass">
         <button className="modal-close" onClick={onClose}><X /></button>
+        <div className="auth-brand"><img src="/logo.png" alt="Pluto" className="brand-logo" draggable={false} /></div>
         <div className="auth-hero">
           <span>{step < wizard.length ? `Welcome ${step + 1}/${wizard.length}` : 'Mulai pakai Pluto'}</span>
           <h2>{step < wizard.length ? wizard[step].title : mode === 'login' ? 'Masuk ke Pluto' : 'Buat akun Pluto'}</h2>
